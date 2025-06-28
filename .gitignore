@@ -1,0 +1,38 @@
+# WordPress
+wp-config.php
+wp-content/uploads/
+wp-content/cache/
+wp-content/backup-db/
+wp-content/advanced-cache.php
+wp-content/wp-cache-config.php
+
+# Plugin specific
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*~
+
+# IDE and AI tools
+.vscode/
+.idea/
+.amazonq/
+*.swp
+*.swo
+
+# Node modules (if any)
+node_modules/
+npm-debug.log
+
+# Composer
+vendor/
+composer.lock
+
+# Build files
+build/
+dist/
+
+# Environment files
+.env
+.env.local
+.env.production

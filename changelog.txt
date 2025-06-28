@@ -1,0 +1,26 @@
+# SportsPress Player Merge - Changelog
+
+## Version 0.1 - Initial Release
+
+### New Features
+- Player merging with complete data preservation
+- Team management logic (current vs past teams)
+- Detailed merge preview with expandable sections
+- Full revert functionality to undo merges
+- Reference tracking for player lists and events
+- Statistics recalculation after operations
+- Modern AJAX-driven admin interface
+- Dedicated backup system with database table
+
+### Improvements
+- Optimized for large player datasets
+- Comprehensive error handling and logging
+- Enhanced security with proper validation
+- Clean uninstall with proper cleanup
+
+### Technical
+- WordPress 5.0+ compatibility
+- SportsPress 2.7+ compatibility
+- PHP 7.4+ support
+- Custom database table for backups
+- Proper reference management system

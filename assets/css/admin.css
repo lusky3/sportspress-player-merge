@@ -1,0 +1,455 @@
+/**
+ * SportsPress Player Merge - Admin Styles
+ * 
+ * Modern, clean styling for the player merge admin interface
+ * Follows WordPress admin design patterns with enhanced UX
+ */
+
+/* Main Container Styles */
+.sp-merge-wrap {
+    max-width: 1200px;
+    margin: 20px 0;
+}
+
+/* Header Section */
+.sp-merge-header {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.sp-merge-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 8px 0;
+    font-size: 24px;
+    font-weight: 600;
+    color: #1d2327;
+}
+
+.sp-merge-title .dashicons {
+    color: #2271b1;
+    font-size: 28px;
+}
+
+.sp-merge-description {
+    margin: 0;
+    color: #646970;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* Card Layout */
+.sp-merge-container {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: 1fr;
+}
+
+.sp-merge-card {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.sp-merge-card-header {
+    background: #f6f7f7;
+    border-bottom: 1px solid #ccd0d4;
+    padding: 16px 24px;
+}
+
+.sp-merge-card-header h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1d2327;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sp-merge-card-body {
+    padding: 24px;
+}
+
+/* Form Styles */
+.sp-form-group {
+    margin-bottom: 24px;
+}
+
+.sp-form-group:last-child {
+    margin-bottom: 0;
+}
+
+.sp-form-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #1d2327;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.sp-form-label .dashicons {
+    font-size: 16px;
+    color: #2271b1;
+}
+
+.sp-form-select,
+.sp-form-multiselect {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1.5;
+    background: #fff;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.sp-form-select:focus,
+.sp-form-multiselect:focus {
+    border-color: #2271b1;
+    box-shadow: 0 0 0 1px #2271b1;
+    outline: none;
+}
+
+.sp-form-multiselect {
+    min-height: 200px;
+    resize: vertical;
+}
+
+.sp-form-help {
+    margin: 8px 0 0 0;
+    color: #646970;
+    font-size: 13px;
+    line-height: 1.4;
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.sp-form-help .dashicons {
+    font-size: 14px;
+    margin-top: 1px;
+    flex-shrink: 0;
+}
+
+.sp-form-help kbd {
+    background: #f1f1f1;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 2px 4px;
+    font-size: 11px;
+    font-family: monospace;
+}
+
+/* Action Buttons */
+.sp-form-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid #dcdcde;
+}
+
+.sp-form-actions .button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 4px;
+    transition: all 0.15s ease-in-out;
+}
+
+.sp-form-actions .button .dashicons {
+    font-size: 16px;
+}
+
+.sp-btn-preview {
+    background: #f6f7f7;
+    border-color: #8c8f94;
+    color: #2c3338;
+}
+
+.sp-btn-preview:hover {
+    background: #f0f0f1;
+    border-color: #8c8f94;
+    color: #1d2327;
+}
+
+.sp-btn-execute {
+    background: #2271b1;
+    border-color: #2271b1;
+    color: #fff;
+}
+
+.sp-btn-execute:hover:not(:disabled) {
+    background: #135e96;
+    border-color: #135e96;
+}
+
+.sp-btn-execute:disabled {
+    background: #f6f7f7;
+    border-color: #dcdcde;
+    color: #a7aaad;
+    cursor: not-allowed;
+}
+
+.sp-btn-revert {
+    background: #d63638;
+    border-color: #d63638;
+    color: #fff;
+}
+
+.sp-btn-revert:hover:not(:disabled) {
+    background: #b32d2e;
+    border-color: #b32d2e;
+}
+
+/* Preview Table Styles */
+.merge-preview-container {
+    font-size: 14px;
+}
+
+.preview-section {
+    margin-bottom: 24px;
+}
+
+.preview-section:last-child {
+    margin-bottom: 0;
+}
+
+.preview-section h4 {
+    margin: 0 0 12px 0;
+    color: #1d2327;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.merge-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.merge-preview-table th,
+.merge-preview-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #f0f0f1;
+    vertical-align: top;
+}
+
+.merge-preview-table th {
+    background: #f6f7f7;
+    font-weight: 600;
+    color: #1d2327;
+    border-bottom: 1px solid #ccd0d4;
+}
+
+.merge-preview-table tr:last-child td {
+    border-bottom: none;
+}
+
+.merge-preview-table tr:nth-child(even) {
+    background: #f9f9f9;
+}
+
+/* Messages */
+.sp-merge-messages {
+    margin-top: 20px;
+}
+
+.sp-merge-message {
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.sp-merge-message.success {
+    background: #d1e7dd;
+    border: 1px solid #badbcc;
+    color: #0f5132;
+}
+
+.sp-merge-message.error {
+    background: #f8d7da;
+    border: 1px solid #f5c2c7;
+    color: #842029;
+}
+
+.sp-merge-message.info {
+    background: #cff4fc;
+    border: 1px solid #b6effb;
+    color: #055160;
+}
+
+/* Loading Overlay */
+.sp-merge-loading {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 999999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sp-loading-spinner {
+    background: #fff;
+    padding: 32px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.sp-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #2271b1;
+    border-radius: 50%;
+    animation: sp-spin 1s linear infinite;
+    margin: 0 auto 16px;
+}
+
+@keyframes sp-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Recent Backups */
+.sp-backup-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.sp-backup-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #f0f0f1;
+    gap: 12px;
+}
+
+.sp-backup-item:last-child {
+    border-bottom: none;
+}
+
+.sp-backup-item input[type="checkbox"] {
+    margin: 0;
+}
+
+.sp-backup-item label {
+    flex: 1;
+    margin: 0;
+    cursor: pointer;
+}
+
+.sp-backup-date {
+    color: #646970;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.sp-backup-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.sp-revert-backup,
+.sp-delete-backup {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+}
+
+.sp-merge-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Help Section */
+.sp-merge-help {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 8px;
+    padding: 24px;
+    margin-top: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.sp-merge-help h3 {
+    margin: 0 0 16px 0;
+    color: #1d2327;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.sp-merge-help ol {
+    margin: 0 0 20px 0;
+    padding-left: 20px;
+}
+
+.sp-merge-help li {
+    margin-bottom: 8px;
+    line-height: 1.5;
+}
+
+.sp-merge-warning {
+    background: #fff3cd;
+    border: 1px solid #ffecb5;
+    border-radius: 4px;
+    padding: 12px 16px;
+    color: #664d03;
+}
+
+.sp-merge-warning p {
+    margin: 0;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .sp-merge-wrap {
+        margin: 10px;
+    }
+    
+    .sp-merge-header,
+    .sp-merge-card-body {
+        padding: 16px;
+    }
+    
+    .sp-form-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .sp-form-actions .button {
+        justify-content: center;
+    }
+}
