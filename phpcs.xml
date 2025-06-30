@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<ruleset name="SportsPress Player Merge">
+    <description>WordPress Coding Standards for SportsPress Player Merge</description>
+    
+    <!-- Include WordPress Coding Standards -->
+    <rule ref="WordPress"/>
+    
+    <!-- Check all PHP files -->
+    <file>.</file>
+    
+    <!-- Exclude vendor and node_modules -->
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+    
+    <!-- Allow short array syntax -->
+    <rule ref="Generic.Arrays.DisallowShortArraySyntax.Found">
+        <severity>0</severity>
+    </rule>
+</ruleset>

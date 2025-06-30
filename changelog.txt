@@ -1,5 +1,31 @@
 # SportsPress Player Merge - Changelog
 
+## Version 0.2.0 - Enhanced Statistics Handling
+
+### Major Improvements
+- **Enhanced Statistics Merging Algorithm**: Completely rewritten statistics merging logic to handle complex nested SportsPress data structures
+- **Data Corruption Prevention**: Advanced validation and fallback mechanisms prevent statistics corruption during merge operations
+- **Large Dataset Optimization**: Improved handling of players with extensive statistics data (12KB+ serialized arrays)
+- **Robust Error Recovery**: Enhanced fallback logic maintains data integrity when merge operations encounter issues
+
+### Bug Fixes
+- Fixed statistics merging failures with complex multi-league player data
+- Resolved memory issues when processing large statistics arrays
+- Improved reference tracking accuracy during revert operations
+- Enhanced serialization handling for complex data structures
+
+### Performance Enhancements
+- Optimized memory usage for large statistics datasets
+- Improved merge algorithm efficiency for nested array structures
+- Better handling of SportsPress league → event → statistics hierarchy
+- Reduced database query overhead during complex merges
+
+### Technical Improvements
+- Enhanced merge_array_data() method with proper nested structure handling
+- Improved validation for serialized data integrity
+- Better error logging and debugging information
+- Enhanced fallback mechanisms for failed operations
+
 ## Version 0.1 - Initial Release
 
 ### New Features

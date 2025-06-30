@@ -7,14 +7,15 @@
  */
 
 // Prevent direct access
-// Import the necessary logging package
-// This package is used to log error messages for better debugging and monitoring
-use Psr\Log\LoggerInterface;
-
 if (!defined('ABSPATH')) {
-    // Log the unauthorized access attempt and show an error message
-    $logger->error('Unauthorized direct access attempt');
     wp_die('Direct access denied.', 'Access Denied', array('response' => 403));
+}
+
+// Helper function to render player options
+function sp_render_player_options($players) {
+    foreach ($players as $player) {
+        echo '<option value="' . esc_attr($player['id']) . '">' . esc_html($player['name']) . '</option>';
+    }
 }
 ?>
 
@@ -32,6 +33,7 @@ if (!defined('ABSPATH')) {
 
     <!-- Main Content Container -->
     <div class="sp-merge-container">
+        <?php $recent_backups = $this->get_recent_backups(); ?>
         
         <!-- Merge Form Card -->
         <div class="sp-merge-card">
@@ -51,11 +53,7 @@ if (!defined('ABSPATH')) {
                         </label>
                         <select name="primary_player" id="primary-player" class="sp-form-select" required>
                             <option value="">Choose the player to keep...</option>
-                            <?php foreach ($players as $player): ?>
-                                <option value="<?php echo esc_attr($player['id']); ?>">
-                                    <?php echo esc_html($player['name']); ?>
-                                </option>
-                            <?php endforeach; ?>
+                            <?php sp_render_player_options($players); ?>
                         </select>
                         <p class="sp-form-help">This player will retain all data and remain in the system.</p>
                     </div>
@@ -67,11 +65,7 @@ if (!defined('ABSPATH')) {
                             Duplicate Players (will be merged and deleted)
                         </label>
                         <select name="duplicate_players[]" id="duplicate-players" class="sp-form-multiselect" multiple size="8">
-                            <?php foreach ($players as $player): ?>
-                                <option value="<?php echo esc_attr($player['id']); ?>">
-                                    <?php echo esc_html($player['name']); ?>
-                                </option>
-                            <?php endforeach; ?>
+                            <?php sp_render_player_options($players); ?>
                         </select>
                         <p class="sp-form-help">
                             <span class="dashicons dashicons-info"></span>
@@ -89,7 +83,7 @@ if (!defined('ABSPATH')) {
                             <span class="dashicons dashicons-admin-tools"></span>
                             Execute Merge
                         </button>
-                        <button type="button" id="revert-merge" class="button button-secondary sp-btn-revert" disabled style="display:none;">
+                        <button type="button" id="revert-merge" class="button button-secondary sp-btn-revert<?php echo empty($recent_backups) ? ' sp-hidden' : ''; ?>" <?php echo empty($recent_backups) ? 'disabled' : ''; ?>>
                             <span class="dashicons dashicons-undo"></span>
                             Revert Last Merge
                         </button>
@@ -99,12 +93,16 @@ if (!defined('ABSPATH')) {
         </div>
         
         <!-- Preview Results Card -->
-        <div id="merge-preview-card" class="sp-merge-card" style="display:none;">
+        <div id="merge-preview-card" class="sp-merge-card sp-hidden">
             <div class="sp-merge-card-header">
                 <h2>
                     <span class="dashicons dashicons-visibility"></span>
                     Merge Preview
                 </h2>
+                <button type="button" id="cancel-preview" class="button button-secondary">
+                    <span class="dashicons dashicons-no"></span>
+                    Cancel Preview
+                </button>
             </div>
             <div class="sp-merge-card-body">
                 <div id="preview-content">
@@ -114,9 +112,8 @@ if (!defined('ABSPATH')) {
         </div>
         
         <!-- Recent Backups -->
-        <?php $recent_backups = $this->get_recent_backups(); ?>
         <?php if (!empty($recent_backups)): ?>
-        <div class="sp-merge-card">
+        <div class="sp-merge-card sp-backup-section">
             <div class="sp-merge-card-header">
                 <h2>
                     <span class="dashicons dashicons-backup"></span>
@@ -156,30 +153,41 @@ if (!defined('ABSPATH')) {
             <!-- Status messages will appear here -->
         </div>
         
+        <!-- Help Section -->
+        <div class="sp-merge-card">
+            <div class="sp-merge-card-header">
+                <h2>
+                    <span class="dashicons dashicons-info"></span>
+                    How to Use This Tool
+                </h2>
+            </div>
+            <div class="sp-merge-card-body">
+                <ol>
+                    <li><strong>Select Primary Player:</strong> Choose the player you want to keep. This player will retain all existing data.</li>
+                    <li><strong>Select Duplicates:</strong> Choose one or more duplicate players to merge into the primary player.</li>
+                    <li><strong>Preview:</strong> Click "Preview Merge" to see what data will be combined.</li>
+                    <li><strong>Execute:</strong> Click "Execute Merge" to perform the merge operation.</li>
+                    <li><strong>Revert:</strong> If needed, you can revert the last merge operation to restore deleted players.</li>
+                </ol>
+                
+                <div class="sp-merge-warning">
+                    <p><strong>Important:</strong> Always preview your merge before executing. While merges can be reverted, it's best to be certain of your selections. The revert function is not a replacement for a full database backup. It is always recommended to take a full database backup before performing any data manipulation operations.</p>
+                </div>
+
+                <div class="sp-merge-disclaimer">
+                    <p><em>SportsPress Player Merge (SP Merge) is not affiliated with or endorsed by the creators of SportsPress.</em></p>
+                </div>
+            </div>
+        </div>
+        
     </div>
     
     <!-- Loading Overlay -->
-    <div id="sp-merge-loading" class="sp-merge-loading" style="display:none;">
+    <div id="sp-merge-loading" class="sp-merge-loading sp-hidden">
         <div class="sp-loading-spinner">
             <div class="sp-spinner"></div>
             <p>Processing merge operation...</p>
         </div>
     </div>
     
-</div>
-
-<!-- Help Section -->
-<div class="sp-merge-help">
-    <h3>How to Use This Tool</h3>
-    <ol>
-        <li><strong>Select Primary Player:</strong> Choose the player you want to keep. This player will retain all existing data.</li>
-        <li><strong>Select Duplicates:</strong> Choose one or more duplicate players to merge into the primary player.</li>
-        <li><strong>Preview:</strong> Click "Preview Merge" to see what data will be combined.</li>
-        <li><strong>Execute:</strong> Click "Execute Merge" to perform the merge operation.</li>
-        <li><strong>Revert:</strong> If needed, you can revert the last merge operation to restore deleted players.</li>
-    </ol>
-    
-    <div class="sp-merge-warning">
-        <p><strong>Important:</strong> Always preview your merge before executing. While merges can be reverted, it's best to be certain of your selections.</p>
-    </div>
 </div>

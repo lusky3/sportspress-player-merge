@@ -1,18 +1,19 @@
 # SportsPress Player Merge
 
-A WordPress plugin that provides advanced player merging functionality for SportsPress with comprehensive data preservation, reference tracking, and full revert capabilities.
+A WordPress plugin that provides advanced player merging functionality for SportsPress with comprehensive data preservation, intelligent statistics handling, and full revert capabilities.
 
 ## Features
 
-- **Smart Player Merging**: Merge duplicate players while preserving all data including assignments and statistics
+- **Smart Player Merging**: Merge duplicate players while preserving all data including complex statistics structures
+- **Advanced Statistics Handling**: Intelligent merging of nested SportsPress statistics arrays without data corruption
 - **Reference Tracking**: Tracks and properly handles all database references (player lists, events, etc.)
-- **Team Management**: Handles current and past team assignments
+- **Team Management**: Handles current and past team assignments with deduplication
 - **Data Preview**: See exactly what will be merged before execution with expandable sections
 - **Full Revert**: Complete undo functionality that restores deleted players and reverts all references
 - **Statistics Recalculation**: Automatically triggers SportsPress statistics recalculation after operations
 - **Modern Interface**: Clean, responsive admin interface with AJAX interactions
-- **Backup System**: Uses dedicated database table for efficient backup storage
-- **Performance Optimized**: Handles hundreds of players efficiently with proper memory management
+- **Robust Backup System**: Uses dedicated database table with comprehensive data preservation
+- **Performance Optimized**: Handles large datasets and complex statistics structures efficiently
 
 ## Installation
 
@@ -82,18 +83,26 @@ sportspress-player-merge/
 
 ## Key Improvements
 
+### Enhanced Statistics Merging (v0.2.0)
+
+- **Intelligent Array Merging**: Properly handles complex nested SportsPress statistics structures
+- **Data Corruption Prevention**: Advanced validation prevents statistics data corruption during merge
+- **Large Dataset Support**: Optimized for players with extensive statistics (12KB+ data structures)
+- **League-Event Structure**: Preserves SportsPress league → event → statistics hierarchy
+
 ### Reference Tracking System
 
 - Tracks all database references before merging
 - Properly reverts references during undo operations
 - Prevents orphaned data in player lists and events
+- Dynamic reference lookup for accurate restoration
 
 ### Enhanced Backup System
 
 - Dedicated database table for better performance
 - Comprehensive data backup including taxonomies
 - Automatic cleanup of old backups
-- Proper serialization handling
+- Proper serialization handling with validation
 
 ### Statistics Integration
 

@@ -1,14 +1,14 @@
 === SportsPress Player Merge ===
-Contributors: yourname
+Contributors: lusky3
 Tags: sportspress, players, merge, duplicate, sports
 Requires at least: 5.0
 Tested up to: 6.4
 Requires PHP: 7.4
-Stable tag: 0.1
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Advanced player merging tool for SportsPress with reference tracking, intelligent data handling, and full revert capabilities.
+Advanced player merging tool for SportsPress with enhanced statistics handling, reference tracking, and full revert capabilities.
 
 == Description ==
 
@@ -16,8 +16,9 @@ SportsPress Player Merge is a powerful WordPress plugin designed to solve the co
 
 = Key Features =
 
+* **Enhanced Statistics Merging**: Intelligent handling of complex nested SportsPress statistics structures
 * **Reference Tracking**: Tracks and properly handles all database references (player lists, events, assignments)
-* **Intelligent Merging**: Combines all player data while preventing duplicates
+* **Intelligent Merging**: Combines all player data while preventing duplicates and data corruption
 * **Data Preservation**: All statistics, teams, leagues, assignments, and custom fields are preserved
 * **Preview System**: See exactly what will be merged before execution with expandable sections
 * **Full Revert**: Complete undo functionality restores deleted players and reverts all references
@@ -268,6 +269,15 @@ The plugin analyzes season data to determine current vs past teams. Players with
 
 == Changelog ==
 
+= 0.2.0 =
+* **Enhanced Statistics Merging**: Improved algorithm for handling complex nested SportsPress statistics
+* **Data Corruption Prevention**: Advanced validation prevents statistics corruption during merge operations
+* **Large Dataset Optimization**: Better handling of players with extensive statistics data (12KB+ structures)
+* **Improved Error Handling**: Enhanced fallback mechanisms for failed merge operations
+* **Reference Tracking Improvements**: More robust reference restoration during revert operations
+* **Performance Enhancements**: Optimized memory usage for large statistics arrays
+* **Bug Fixes**: Resolved issues with complex multi-league player statistics merging
+
 = 0.1 =
 * Initial release with comprehensive functionality
 * Advanced player merging with reference tracking
@@ -285,6 +295,9 @@ The plugin analyzes season data to determine current vs past teams. Players with
 * Support for complex SportsPress data structures
 
 == Upgrade Notice ==
+
+= 0.2.0 =
+Major improvements to statistics merging algorithm. Enhanced handling of complex SportsPress data structures and better error recovery. Recommended upgrade for all users, especially those with extensive player statistics.
 
 = 0.1 =
 Initial release with comprehensive player merging functionality. Includes reference tracking, full revert capabilities, and statistics recalculation. Backup your database before use as recommended for all data operations.
