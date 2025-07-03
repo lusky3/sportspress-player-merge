@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # SportsPress Player Merge - Comprehensive Test Automation
-# Containerized testing from ground zero
+# Using wp-cli for efficient WordPress setup
 
 set -e
 
@@ -27,20 +27,35 @@ docker-compose down -v 2>/dev/null || true
 
 # Build and run comprehensive tests
 echo "🏗️ Building test environment..."
-docker-compose build
+docker-compose build --no-cache
 
 echo "📦 Starting WordPress and database..."
 docker-compose up -d wordpress db
 
-# Wait for WordPress to be ready
-echo "⏳ Waiting for WordPress to initialize..."
-sleep 30
+# Wait for services to be healthy
+echo "⏳ Waiting for services to be ready..."
+for i in {1..30}; do
+    if docker-compose exec -T wordpress curl -f http://localhost > /dev/null 2>&1; then
+        echo "✅ WordPress is ready"
+        break
+    fi
+    echo "⏳ Waiting for WordPress... ($i/30)"
+    sleep 2
+done
 
 echo "🧪 Running comprehensive test suite..."
 docker-compose run --rm test-runner
 
 # Capture exit code
 TEST_EXIT_CODE=$?
+
+# Show container logs if tests failed
+if [ $TEST_EXIT_CODE -ne 0 ]; then
+    echo "📋 WordPress container logs:"
+    docker-compose logs wordpress | tail -20
+    echo "📋 Database container logs:"
+    docker-compose logs db | tail -10
+fi
 
 # Cleanup
 echo "🧹 Cleaning up test environment..."

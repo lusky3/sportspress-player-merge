@@ -2,17 +2,19 @@
   "name": "sportspress-player-merge-tests",
   "version": "1.0.0",
   "description": "Automated tests for SportsPress Player Merge plugin",
-  "main": "test-runner.js",
+  "main": "simple-test-runner.js",
   "scripts": {
-    "test": "node test-runner.js",
-    "test:docker": "docker-compose up --build --abort-on-container-exit",
-    "test:local": "TEST_URL=http://localhost:8080 node test-runner.js",
+    "test": "node simple-test-runner.js",
+    "test:full": "node test-runner.js",
+    "test:docker": "docker-compose up --build --abort-on-container-exit --exit-code-from test-runner",
+    "test:local": "TEST_URL=http://localhost:8080 node simple-test-runner.js",
     "setup": "docker-compose up -d wordpress db",
     "teardown": "docker-compose down -v"
   },
   "dependencies": {
     "playwright": "^1.40.0",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "node-fetch": "^2.7.0"
   },
   "engines": {
     "node": ">=16.0.0"

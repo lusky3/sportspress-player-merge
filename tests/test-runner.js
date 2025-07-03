@@ -1,11 +1,13 @@
 /**
  * SportsPress Player Merge - Comprehensive Test Suite
- * Containerized testing from ground zero
+ * Using wp-cli for efficient WordPress setup
  */
 
 const { chromium } = require('playwright');
+const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const fetch = require('node-fetch');
 const SPDataSetup = require('./data-setup');
 
 class SPMergeTestRunner {
@@ -19,22 +21,22 @@ class SPMergeTestRunner {
 
     async setup() {
         try {
+            await this.waitForWordPress();
+            await this.setupWordPressWithCLI();
+            await this.installPluginsWithCLI();
+            
+            // Only launch browser after WordPress is fully set up
             this.browser = await chromium.launch({ 
                 headless: process.env.HEADLESS !== 'false',
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             });
             this.page = await this.browser.newPage();
-            await this.waitForWordPress();
-            await this.setupWordPress();
-            await this.installPlugins();
             
             // Use REST API for efficient data setup
             this.dataSetup = new SPDataSetup(this.baseUrl);
             this.testData = await this.dataSetup.setup();
         } catch (error) {
             console.error('❌ Setup failed:', error.message);
-            console.error('\n💡 This usually means Playwright browsers are not installed.');
-            console.error('   Run: npx playwright install chromium');
             throw error;
         }
     }
@@ -44,61 +46,68 @@ class SPMergeTestRunner {
         let attempts = 0;
         while (attempts < 30) {
             try {
-                await this.page.goto(this.baseUrl, { timeout: 5000 });
-                break;
-            } catch {
-                attempts++;
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                const response = await fetch(this.baseUrl);
+                if (response.ok) {
+                    console.log('✅ WordPress is responding');
+                    break;
+                }
+            } catch (error) {
+                // Continue waiting
+                console.log(`⏳ Attempt ${attempts + 1}/30: WordPress not ready yet...`);
             }
+            attempts++;
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        if (attempts >= 30) {
+            throw new Error('WordPress failed to start after 60 seconds');
         }
     }
 
-    async setupWordPress() {
-        console.log('🔧 Setting up WordPress...');
+    async setupWordPressWithCLI() {
+        console.log('🔧 Setting up WordPress with wp-cli...');
         try {
-            await this.page.goto(`${this.baseUrl}/wp-admin/install.php`);
-            await this.page.fill('#weblog_title', 'Test Site');
-            await this.page.fill('#user_name', 'admin');
-            await this.page.fill('#admin_password', 'admin');
-            await this.page.fill('#admin_email', 'admin@test.com');
-            await this.page.click('#submit');
-            await this.page.waitForSelector('.step', { timeout: 10000 });
-        } catch {
-            // WordPress already installed
+            // Install WordPress
+            this.execWPCLI('core install --url=http://localhost:8080 --title="Test Site" --admin_user=admin --admin_password=admin --admin_email=admin@test.com --skip-email');
+            console.log('✅ WordPress installed successfully');
+        } catch (error) {
+            console.log('ℹ️ WordPress may already be installed:', error.message);
         }
     }
 
-    async installPlugins() {
-        console.log('📦 Installing plugins...');
-        await this.login();
-        
-        // Install SportsPress
-        await this.installPlugin('sportspress');
-        
-        // Upload and activate our plugin
-        await this.uploadPlugin();
-    }
-
-    async installPlugin(slug) {
-        await this.page.goto(`${this.baseUrl}/wp-admin/plugin-install.php?s=${slug}&tab=search&type=term`);
-        await this.page.click(`[data-slug="${slug}"] .install-now`);
-        await this.page.waitForSelector(`[data-slug="${slug}"] .activate-now`);
-        await this.page.click(`[data-slug="${slug}"] .activate-now`);
-    }
-
-    async uploadPlugin() {
-        await this.page.goto(`${this.baseUrl}/wp-admin/plugin-install.php?tab=upload`);
-        const pluginPath = path.resolve(__dirname, '../sportspress-player-merge.zip');
-        if (fs.existsSync(pluginPath)) {
-            await this.page.setInputFiles('#pluginzip', pluginPath);
-            await this.page.click('#install-plugin-submit');
-            await this.page.click('.activate-now');
+    async installPluginsWithCLI() {
+        console.log('📦 Installing plugins with wp-cli...');
+        try {
+            // Install and activate SportsPress
+            this.execWPCLI('plugin install sportspress --activate');
+            console.log('✅ SportsPress installed and activated');
+            
+            // Copy our plugin to the plugins directory
+            const pluginSource = path.resolve(__dirname, '..');
+            const pluginDest = '/var/www/html/wp-content/plugins/sportspress-player-merge';
+            
+            execSync(`docker exec tests-wordpress-1 mkdir -p ${pluginDest}`);
+            execSync(`docker cp ${pluginSource}/. tests-wordpress-1:${pluginDest}/`);
+            
+            // Activate our plugin
+            this.execWPCLI('plugin activate sportspress-player-merge');
+            console.log('✅ SportsPress Player Merge activated');
+        } catch (error) {
+            console.error('❌ Plugin installation failed:', error.message);
+            throw error;
         }
+    }
+
+    execWPCLI(command) {
+        const fullCommand = `docker exec tests-wordpress-1 wp ${command} --allow-root`;
+        return execSync(fullCommand, { encoding: 'utf8' });
     }
 
 
 
     async login() {
+        if (!this.page) {
+            throw new Error('Browser not initialized');
+        }
         await this.page.goto(`${this.baseUrl}/wp-admin`);
         await this.page.fill('#user_login', 'admin');
         await this.page.fill('#user_pass', 'admin');
@@ -141,6 +150,7 @@ class SPMergeTestRunner {
 
     async testSamePlayerMerge() {
         try {
+            await this.login();
             await this.page.goto(`${this.baseUrl}/wp-admin/admin.php?page=sp-player-merge`);
             await this.page.selectOption('#primary-player', { index: 1 });
             await this.page.selectOption('#duplicate-players', { index: 1 });
@@ -154,6 +164,8 @@ class SPMergeTestRunner {
 
     async testBasicMerge() {
         try {
+            await this.login();
+            await this.page.goto(`${this.baseUrl}/wp-admin/admin.php?page=sp-player-merge`);
             await this.page.selectOption('#primary-player', { index: 1 });
             await this.page.selectOption('#duplicate-players', { index: 2 });
             await this.page.click('#generate-preview');
