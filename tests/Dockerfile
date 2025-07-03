@@ -1,30 +1,29 @@
-FROM node:18-alpine
+FROM node:18-bullseye
 
-# Install dependencies for Playwright
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont
-
-# Set Chromium path for Playwright
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# Install system dependencies for Playwright
+RUN apt-get update && apt-get install -y \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libxss1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install Node dependencies with cache
-RUN --mount=type=cache,target=/root/.npm \
-    npm install
+# Install Node dependencies
+RUN npm install
 
 # Install Playwright browsers
-RUN npx playwright install chromium
+RUN npx playwright install chromium --with-deps
 
 # Copy test files
 COPY . .
