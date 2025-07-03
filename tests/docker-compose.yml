@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   wordpress:
     image: wordpress:latest
     ports:
-      - "8080:80"
+      - "8081:80"
     environment:
       WORDPRESS_DB_HOST: db
       WORDPRESS_DB_USER: wordpress
@@ -15,15 +13,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: >
-      sh -c '
-        # Install wp-cli
-        curl -O https://raw.githubusercontent.com/wp-cli/wp-cli/v2.8.1/utils/wp-cli.phar &&
-        chmod +x wp-cli.phar &&
-        mv wp-cli.phar /usr/local/bin/wp &&
-        # Start Apache
-        apache2-foreground
-      '
 
   db:
     image: mysql:8.0
