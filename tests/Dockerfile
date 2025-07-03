@@ -19,8 +19,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install Node dependencies
-RUN npm install
+# Install Node dependencies with cache
+RUN --mount=type=cache,target=/root/.npm \
+    npm install
 
 # Install Playwright browsers
 RUN npx playwright install chromium
