@@ -30,31 +30,46 @@ class SP_Merge_Processor {
             }
             
             foreach ($duplicate_ids as $duplicate_id) {
-                $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Attempting to delete player ID " . intval($duplicate_id));
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: Attempting to delete player ID %d", intval($user_id), intval($duplicate_id)));
+                }
                 
                 // Check if player exists before deletion
                 $player_before = get_post($duplicate_id);
                 if (!$player_before) {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Player " . intval($duplicate_id) . " does not exist, skipping deletion");
+                    if (defined('WP_DEBUG') && WP_DEBUG) {
+                        $user_id = get_current_user_id();
+                        error_log(sprintf("SP Merge [User: %d]: Player %d does not exist, skipping deletion", intval($user_id), intval($duplicate_id)));
+                    }
                     continue;
                 }
                 
                 $deleted = wp_delete_post($duplicate_id, true);
-                error_log("SP Merge [User: " . intval($user_id) . "]: wp_delete_post returned: " . var_export($deleted, true));
+                
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: wp_delete_post returned: %s", intval($user_id), var_export($deleted, true)));
+                }
                 
                 // Verify deletion
                 $player_after = get_post($duplicate_id);
                 if ($player_after && $player_after->post_status !== 'trash') {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Player " . intval($duplicate_id) . " still exists after deletion attempt");
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: Player %d still exists after deletion attempt", intval($user_id), intval($duplicate_id)));
                     throw new Exception(__('Failed to delete duplicate player', 'sportspress-player-merge') . ': ' . $duplicate_id);
                 }
                 
-                error_log("SP Merge [User: " . intval($user_id) . "]: Successfully deleted player ID " . intval($duplicate_id));
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: Successfully deleted player ID %d", intval($user_id), intval($duplicate_id)));
+                }
             }
             
-            $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Completed merge of player " . intval($primary_id));
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                $user_id = get_current_user_id();
+                error_log(sprintf("SP Merge [User: %d]: Completed merge of player %d", intval($user_id), intval($primary_id)));
+            }
             
             return [
                 'success' => true,
@@ -64,8 +79,10 @@ class SP_Merge_Processor {
         } catch (Exception $e) {
             // Clean up backup if merge failed
             if ($backup && $backup_id) {
-                $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Merge failed, cleaning up backup " . $backup_id);
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: Merge failed, cleaning up backup %s", intval($user_id), $backup_id));
+                }
                 $backup->delete_backup($backup_id);
             }
             
@@ -84,7 +101,7 @@ class SP_Merge_Processor {
             return true;
         } catch (Exception $e) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Single player merge failed - " . $e->getMessage());
+            error_log(sprintf("SP Merge [User: %d]: Single player merge failed - %s", intval($user_id), $e->getMessage()));
             return false;
         }
     }
@@ -102,8 +119,10 @@ class SP_Merge_Processor {
             $duplicate_terms = wp_get_object_terms($duplicate_id, $taxonomy, ['fields' => 'ids']);
             
             if (is_wp_error($primary_terms) || is_wp_error($duplicate_terms)) {
-                $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Error getting terms for taxonomy " . sanitize_key($taxonomy));
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: Error getting terms for taxonomy %s", intval($user_id), sanitize_key($taxonomy)));
+                }
                 continue;
             }
             
@@ -115,8 +134,10 @@ class SP_Merge_Processor {
             if (count($merged_terms) > count($primary_terms)) {
                 $result = wp_set_object_terms($primary_id, $merged_terms, $taxonomy);
                 if (is_wp_error($result)) {
-                    $user_id = get_current_user_id();
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Failed to set terms for taxonomy " . sanitize_key($taxonomy));
+                    if (defined('WP_DEBUG') && WP_DEBUG) {
+                        $user_id = get_current_user_id();
+                        error_log(sprintf("SP Merge [User: %d]: Failed to set terms for taxonomy %s", intval($user_id), sanitize_key($taxonomy)));
+                    }
                 }
             }
         }
@@ -165,71 +186,95 @@ class SP_Merge_Processor {
         $primary_value = get_post_meta($primary_id, $key, true);
         $duplicate_value = get_post_meta($duplicate_id, $key, true);
         
-        error_log("SP Merge [User: " . intval($user_id) . "]: Merging field '{$key}' - Primary empty: " . (empty($primary_value) ? 'yes' : 'no') . ", Duplicate empty: " . (empty($duplicate_value) ? 'yes' : 'no'));
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf("SP Merge [User: %d]: Merging field '%s' - Primary empty: %s, Duplicate empty: %s", intval($user_id), $key, (empty($primary_value) ? 'yes' : 'no'), (empty($duplicate_value) ? 'yes' : 'no')));
+        }
         
         if (empty($primary_value) && !empty($duplicate_value)) {
             // Primary is empty, use duplicate value
-            error_log("SP Merge [User: " . intval($user_id) . "]: Using duplicate value for '{$key}'");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Using duplicate value for '%s'", intval($user_id), $key));
+            }
             if (!update_post_meta($primary_id, $key, $duplicate_value)) {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Failed to update meta field '{$key}' with duplicate value");
+                error_log(sprintf("SP Merge [User: %d]: Failed to update meta field '%s' with duplicate value", intval($user_id), $key));
                 throw new Exception(__('Failed to update meta field', 'sportspress-player-merge') . ': ' . $key);
             }
         } elseif (!empty($primary_value) && !empty($duplicate_value)) {
             // Both have values, merge them intelligently
             if ($key === 'sp_leagues' || $key === 'sp_statistics') {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Merging array data for '{$key}'");
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log(sprintf("SP Merge [User: %d]: Merging array data for '%s'", intval($user_id), $key));
+                }
                 try {
                     $merged = $this->merge_array_data($primary_value, $duplicate_value);
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Merged data size for '{$key}': " . strlen(serialize($merged)) . " bytes");
+                    if (defined('WP_DEBUG') && WP_DEBUG) {
+                        error_log(sprintf("SP Merge [User: %d]: Merged data size for '%s': %d bytes", intval($user_id), $key, strlen(serialize($merged))));
+                    }
                     
                     // Validate merged data before attempting update
                     if (!is_array($merged)) {
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Merged data for '{$key}' is not an array, using primary value instead");
+                        if (defined('WP_DEBUG') && WP_DEBUG) {
+                            error_log(sprintf("SP Merge [User: %d]: Merged data for '%s' is not an array, using primary value instead", intval($user_id), $key));
+                        }
                         $merged = $primary_value;
                     }
                     
                     // Log a sample of the merged data structure for debugging
                     if ($key === 'sp_statistics') {
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Sample merged data structure: " . substr(print_r($merged, true), 0, 500));
+                        if (defined('WP_DEBUG') && WP_DEBUG) {
+                            error_log(sprintf("SP Merge [User: %d]: Sample merged data structure: %s", intval($user_id), substr(print_r($merged, true), 0, 500)));
+                        }
                     }
                     
                     // Try to update and capture any WordPress errors
                     $update_result = update_post_meta($primary_id, $key, $merged);
                     if ($update_result === false) {
                         global $wpdb;
-                        error_log("SP Merge [User: " . intval($user_id) . "]: WordPress database error: " . $wpdb->last_error);
-                        error_log("SP Merge [User: " . intval($user_id) . "]: MySQL error: " . mysqli_error($wpdb->dbh));
+                        error_log(sprintf("SP Merge [User: %d]: WordPress database error: %s", intval($user_id), $wpdb->last_error));
+                        error_log(sprintf("SP Merge [User: %d]: MySQL error: %s", intval($user_id), mysqli_error($wpdb->dbh)));
                         
                         // Try a simpler approach - just keep the primary value
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Attempting fallback - keeping primary value for '{$key}'");
+                        if (defined('WP_DEBUG') && WP_DEBUG) {
+                            error_log(sprintf("SP Merge [User: %d]: Attempting fallback - keeping primary value for '%s'", intval($user_id), $key));
+                        }
                         $fallback_result = update_post_meta($primary_id, $key, $primary_value);
                         if ($fallback_result === false) {
-                            error_log("SP Merge [User: " . intval($user_id) . "]: Fallback also failed for '{$key}' - FAILING MERGE to preserve data integrity");
+                            error_log(sprintf("SP Merge [User: %d]: Fallback also failed for '%s' - FAILING MERGE to preserve data integrity", intval($user_id), $key));
                             throw new Exception(__('Failed to update merged meta field', 'sportspress-player-merge') . ': ' . $key);
                         }
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Fallback successful - kept primary value for '{$key}'");
+                        if (defined('WP_DEBUG') && WP_DEBUG) {
+                            error_log(sprintf("SP Merge [User: %d]: Fallback successful - kept primary value for '%s'", intval($user_id), $key));
+                        }
                     } else {
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Successfully merged field '{$key}'");
+                        if (defined('WP_DEBUG') && WP_DEBUG) {
+                            error_log(sprintf("SP Merge [User: %d]: Successfully merged field '%s'", intval($user_id), $key));
+                        }
                     }
                 } catch (Exception $e) {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Exception merging '{$key}': " . $e->getMessage());
+                    error_log(sprintf("SP Merge [User: %d]: Exception merging '%s': %s", intval($user_id), $key, $e->getMessage()));
                     throw $e;
                 }
             }
         } else {
-            error_log("SP Merge [User: " . intval($user_id) . "]: No merge needed for '{$key}' - keeping primary value");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: No merge needed for '%s' - keeping primary value", intval($user_id), $key));
+            }
         }
     }
     
     private function merge_array_data($primary_data, $duplicate_data) {
         if (!is_array($primary_data)) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Primary data is not array, converting to empty array");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Primary data is not array, converting to empty array", intval($user_id)));
+            }
             $primary_data = [];
         }
         if (!is_array($duplicate_data)) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Duplicate data is not array, converting to empty array");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Duplicate data is not array, converting to empty array", intval($user_id)));
+            }
             $duplicate_data = [];
         }
         
@@ -289,7 +334,7 @@ class SP_Merge_Processor {
         ));
         if ($result === false) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to update player references - " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Failed to update player references - %s", intval($user_id), $wpdb->last_error));
             throw new Exception(__('Database update failed', 'sportspress-player-merge'));
         }
     }

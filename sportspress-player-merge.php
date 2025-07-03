@@ -21,7 +21,7 @@
 
 if (!defined('ABSPATH')) {
     $user_id = get_current_user_id();
-    error_log("SP Merge [User: " . intval($user_id) . "]: Direct access denied.");
+    error_log(sprintf("SP Merge [User: %d]: Direct access denied.", intval($user_id)));
     wp_die(__('Unauthorized access.', 'sportspress-player-merge'), 403);
 }
 
@@ -44,8 +44,6 @@ function sp_merge_get_version() {
  * Handles plugin setup, file includes, and WordPress hooks
  */
 class SportsPress_Player_Merge_Init {
-    
-    const BACKUP_RETENTION_DAYS = 30;
     
     /**
      * Constructor - Sets up the plugin when WordPress loads
@@ -78,10 +76,20 @@ class SportsPress_Player_Merge_Init {
         
         // Create backup table
         try {
-            $this->create_backup_table();
+            $this->create_sp_merge_backups_table();
+        } catch (InvalidArgumentException $e) {
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Invalid table configuration - %s", intval($user_id), $e->getMessage()));
+            deactivate_plugins(plugin_basename(__FILE__));
+            wp_die(__('Database table configuration error. Please contact support.', 'sportspress-player-merge'));
+        } catch (RuntimeException $e) {
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Database operation failed - %s", intval($user_id), $e->getMessage()));
+            deactivate_plugins(plugin_basename(__FILE__));
+            wp_die(__('Database connection or permission error. Please check database settings.', 'sportspress-player-merge'));
         } catch (Exception $e) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Backup table creation failed: " . $e->getMessage());
+            error_log(sprintf("SP Merge [User: %d]: Backup table creation failed - %s", intval($user_id), $e->getMessage()));
             deactivate_plugins(plugin_basename(__FILE__));
             wp_die(__('Failed to create backup table. Please check server logs for details.', 'sportspress-player-merge'));
         }
@@ -91,33 +99,31 @@ class SportsPress_Player_Merge_Init {
      * Create backup table for storing merge data
      * @throws Exception If table creation fails
      */
-    private function create_backup_table() {
+    private function create_sp_merge_backups_table() {
         global $wpdb;
         
         $table_name = $wpdb->prefix . 'sp_merge_backups';
         
         $charset_collate = $wpdb->get_charset_collate();
         
-        $sql = $wpdb->prepare(
-            "CREATE TABLE %1s (
-                id bigint(20) NOT NULL AUTO_INCREMENT,
-                backup_id varchar(255) NOT NULL,
-                user_id bigint(20) NOT NULL,
-                backup_data longtext NOT NULL,
-                created_at datetime NOT NULL,
-                PRIMARY KEY (id),
-                KEY backup_id (backup_id),
-                KEY user_id (user_id),
-                KEY created_at (created_at)
-            ) %1s",
-            $table_name,
-            $charset_collate
-        );
+        $sql = "CREATE TABLE {$table_name} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            backup_id varchar(255) NOT NULL,
+            user_id bigint(20) NOT NULL,
+            backup_data longtext NOT NULL,
+            created_at datetime NOT NULL,
+            PRIMARY KEY (id),
+            KEY backup_id (backup_id),
+            KEY user_id (user_id),
+            KEY created_at (created_at)
+        ) {$charset_collate}";
         
         // Use WordPress core file safely with path validation
         $upgrade_path = 'wp-admin/includes/upgrade.php';
         if (validate_file($upgrade_path) !== 0) {
-            throw new Exception(__('Invalid file path detected', 'sportspress-player-merge'));
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Path validation failed - %s", intval($user_id), $upgrade_path));
+            throw new Exception(sprintf(__('Invalid file path detected: %s', 'sportspress-player-merge'), $upgrade_path));
         }
         
         $upgrade_file = ABSPATH . $upgrade_path;
@@ -130,7 +136,22 @@ class SportsPress_Player_Merge_Init {
             pathinfo($real_upgrade_file, PATHINFO_EXTENSION) === 'php' && 
             is_readable($real_upgrade_file)) {
             require_once($real_upgrade_file);
-            dbDelta($sql);
+            
+            $result = dbDelta($sql);
+            
+            // Check if table was created successfully
+            if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name)) !== $table_name) {
+                throw new RuntimeException(__('Failed to create backup table in database', 'sportspress-player-merge'));
+            }
+            
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                $user_id = get_current_user_id();
+                if (!empty($result)) {
+                    error_log(sprintf("SP Merge [User: %d]: Backup table creation completed - %s", intval($user_id), implode(', ', $result)));
+                } else {
+                    error_log(sprintf("SP Merge [User: %d]: Backup table creation - no changes made (table may already exist)", intval($user_id)));
+                }
+            }
         } else {
             throw new Exception(__('WordPress core file missing or invalid: wp-admin/includes/upgrade.php', 'sportspress-player-merge'));
         }
@@ -140,10 +161,77 @@ class SportsPress_Player_Merge_Init {
      * Initialize the plugin - loads required files and classes
      */
     public function init() {
-        // Load text domain for translations
-        load_plugin_textdomain('sportspress-player-merge', false, dirname(plugin_basename(__FILE__)) . '/languages');
+        $user_id = get_current_user_id();
         
-        // Load all modular class files
+        $this->setup_updater($user_id);
+        $this->setup_translations();
+        $this->setup_classes($user_id);
+        $this->setup_controller();
+    }
+
+    private function setup_updater($user_id) {
+        try {
+            $this->init_updater();
+            error_log(sprintf("SP Merge [User: %d]: Updater initialized", intval($user_id)));
+        } catch (Exception $e) {
+            error_log(sprintf("SP Merge [User: %d]: Updater failed - %s", intval($user_id), $e->getMessage()));
+        }
+    }
+
+    private function setup_translations() {
+        $this->load_translations();
+    }
+
+    private function setup_classes($user_id) {
+        try {
+            $this->load_class_files();
+            error_log(sprintf("SP Merge [User: %d]: Class files loaded", intval($user_id)));
+        } catch (InvalidArgumentException $e) {
+            error_log(sprintf("SP Merge [User: %d]: Invalid class file configuration - %s\nStack trace: %s", intval($user_id), $e->getMessage(), $e->getTraceAsString()));
+            throw $e; // Re-throw critical configuration errors
+        } catch (RuntimeException $e) {
+            error_log(sprintf("SP Merge [User: %d]: Class file system error - %s\nStack trace: %s", intval($user_id), $e->getMessage(), $e->getTraceAsString()));
+            throw $e; // Re-throw critical file system errors
+        } catch (Exception $e) {
+            error_log(sprintf("SP Merge [User: %d]: Class loading failed - %s\nStack trace: %s", intval($user_id), $e->getMessage(), $e->getTraceAsString()));
+            return; // Cannot continue without classes
+        }
+    }
+
+    private function setup_controller() {
+        $this->init_controller();
+    }
+
+     
+    private function init_updater() {
+        $updater_file = 'updater.php';
+        
+        if (validate_file($updater_file) !== 0) {
+            throw new Exception(sprintf(__('Invalid updater file name: %s', 'sportspress-player-merge'), $updater_file));
+        }
+        
+        $file_path = SP_MERGE_PLUGIN_PATH . 'includes/' . $updater_file;
+        $real_file_path = realpath($file_path);
+        $real_includes_path = realpath(SP_MERGE_PLUGIN_PATH . 'includes/');
+        
+        if (!$real_file_path || !$real_includes_path || 
+            strpos($real_file_path, $real_includes_path) !== 0) {
+            throw new Exception(__('Updater file path validation failed', 'sportspress-player-merge'));
+        }
+        
+        if (!file_exists($real_file_path) || !is_readable($real_file_path)) {
+            throw new Exception(__('Updater file not accessible', 'sportspress-player-merge'));
+        }
+        
+        require_once $real_file_path;
+        new SP_Merge_GitHub_Updater(__FILE__, 'lusky3/sportspress-player-merge');
+    }
+    
+    private function load_translations() {
+        load_plugin_textdomain('sportspress-player-merge', false, dirname(plugin_basename(__FILE__)) . '/languages');
+    }
+    
+    private function load_class_files() {
         $class_files = [
             'class-sp-merge-controller.php',
             'class-sp-merge-admin.php',
@@ -153,32 +241,45 @@ class SportsPress_Player_Merge_Init {
             'class-sp-merge-preview.php'
         ];
         
+        $real_classes_path = realpath(SP_MERGE_PLUGIN_PATH . 'classes/');
+        
         foreach ($class_files as $file) {
-            if (validate_file($file) !== 0) {
-                continue;
-            }
-            
-            $file_path = SP_MERGE_PLUGIN_PATH . 'classes/' . $file;
-            $real_file_path = realpath($file_path);
-            $real_classes_path = realpath(SP_MERGE_PLUGIN_PATH . 'classes/');
-            
-            if ($real_file_path && $real_classes_path && 
-                strpos($real_file_path, $real_classes_path) === 0 && 
-                file_exists($real_file_path)) {
-                require_once $real_file_path;
-            } else {
-                $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Failed to load class file: " . sanitize_file_name($file));
-            }
+            $this->load_class_file($file, $real_classes_path);
+        }
+    }
+    
+    private function load_class_file($file, $real_classes_path) {
+        if (validate_file($file) !== 0) {
+            throw new Exception(sprintf(__('Invalid class file name: %s', 'sportspress-player-merge'), $file));
         }
         
-        // Initialize the main controller
+        $file_path = SP_MERGE_PLUGIN_PATH . 'classes/' . $file;
+        $real_file_path = realpath($file_path);
+        
+        if (!$real_file_path || !$real_classes_path || strpos($real_file_path, $real_classes_path) !== 0) {
+            throw new Exception(sprintf(__('Class file path validation failed: %s', 'sportspress-player-merge'), $file));
+        }
+        
+        if (!file_exists($real_file_path)) {
+            throw new Exception(sprintf(__('Class file not found: %s', 'sportspress-player-merge'), $file));
+        }
+        
+        if (!is_readable($real_file_path)) {
+            throw new Exception(sprintf(__('Class file not readable: %s', 'sportspress-player-merge'), $file));
+        }
+        
+        require_once $real_file_path;
+        
+        $user_id = get_current_user_id();
+        error_log(sprintf("SP Merge [User: %d]: Successfully loaded class file - %s", intval($user_id), sanitize_file_name($file)));
+    }
+    
+    private function init_controller() {
         if (class_exists('SP_Merge_Controller')) {
             new SP_Merge_Controller();
         }
     }
     
-
 }
 
 // Start the plugin

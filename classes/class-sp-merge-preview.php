@@ -18,7 +18,6 @@ class SP_Merge_Preview {
         $html = '<div class="merge-preview-container">';
         $html .= $this->render_player_names($primary, $duplicates);
         $html .= $this->render_data_comparison($primary_id, $duplicate_ids);
-        $html .= $this->render_expandable_script();
         $html .= '</div>';
         
         return $html;
@@ -70,7 +69,9 @@ class SP_Merge_Preview {
                 $team = $this->get_current_team($dup_id);
                 if ($team) $duplicate_teams[] = $team;
             } catch (Exception $e) {
-                error_log("SP Merge: Failed to get current team for player " . intval($dup_id) . " - " . $e->getMessage());
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log(sprintf("SP Merge: Failed to get current team for player %d - %s", intval($dup_id), $e->getMessage()));
+                }
             }
         }
         
@@ -92,9 +93,11 @@ class SP_Merge_Preview {
         $primary_past = $this->get_past_teams($primary_id);
         $all_duplicate_past = [];
         
-        foreach ($duplicate_ids as $dup_id) {
-            $all_duplicate_past = array_merge($all_duplicate_past, $this->get_past_teams($dup_id));
+        $past_teams = $this->get_past_teams($dup_id);
+        if (is_array($past_teams)) {
+            $all_duplicate_past = array_merge($all_duplicate_past, $past_teams);
         }
+
         
         $unique_duplicate_past = array_unique($all_duplicate_past);
         $merged_past = array_unique(array_merge($primary_past, $unique_duplicate_past));
@@ -127,28 +130,27 @@ class SP_Merge_Preview {
     }
     
     private function get_player_details($player_id) {
-        $player = get_post($player_id);
+        $player_post = get_post($player_id);
         
-        if (is_wp_error($player) || !$player || !isset($player->post_type) || $player->post_type !== 'sp_player') {
+        if (is_wp_error($player_post) || !$player_post || !isset($player_post->post_type) || $player_post->post_type !== 'sp_player') {
             return ['name' => __('Unknown Player', 'sportspress-player-merge'), 'id' => $player_id];
         }
         
         return [
-            'id' => $player->ID,
-            'name' => $player->post_title,
-            'post' => $player
+            'id' => $player_post->ID,
+            'name' => $player_post->post_title,
+            'post' => $player_post
         ];
     }
     
     private function get_current_team($player_id) {
         $current_team_ids = get_post_meta($player_id, 'sp_current_team');
-        if (!empty($current_team_ids)) {
-            $current_team_ids = array_reverse($current_team_ids);
-            foreach ($current_team_ids as $team_id) {
+        if (is_array($current_team_ids) && !empty($current_team_ids)) {
+            foreach (array_reverse($current_team_ids) as $team_id) {
                 if ($team_id && $team_id != '0' && is_numeric($team_id)) {
                     $team_post = get_post($team_id);
-                    if ($team_post && $team_post->post_type === 'sp_team') {
-                        return $team_post->post_title;
+                    if ($team_post && !is_wp_error($team_post) && isset($team_post->post_type) && $team_post->post_type === 'sp_team') {
+                        return $team_post->post_title ?? '';
                     }
                 }
             }
@@ -160,12 +162,13 @@ class SP_Merge_Preview {
     private function get_past_teams($player_id) {
         $past_team_names = [];
         $past_team_ids = get_post_meta($player_id, 'sp_past_team');
-        
-        foreach ($past_team_ids as $team_id) {
-            if ($team_id && $team_id != '0' && is_numeric($team_id)) {
-                $team_post = get_post($team_id);
-                if ($team_post && $team_post->post_type === 'sp_team') {
-                    $past_team_names[] = $team_post->post_title;
+        if (is_array($past_team_ids)) {
+            foreach ($past_team_ids as $team_id) {
+                if ($team_id && $team_id != '0' && is_numeric($team_id)) {
+                    $team_post = get_post($team_id);
+                    if ($team_post && !is_wp_error($team_post) && isset($team_post->post_type) && $team_post->post_type === 'sp_team') {
+                        $past_team_names[] = $team_post->post_title;
+                    }
                 }
             }
         }
@@ -199,7 +202,4 @@ class SP_Merge_Preview {
         return $html;
     }
     
-    private function render_expandable_script() {
-        return '';
-    }
 }

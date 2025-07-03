@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  wordpress:
+    image: wordpress:latest
+    ports:
+      - "8080:80"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - ../:/var/www/html/wp-content/plugins/sportspress-player-merge
+    depends_on:
+      - db
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress
+      MYSQL_ROOT_PASSWORD: rootpassword
+    volumes:
+      - db_data:/var/lib/mysql
+
+  test-runner:
+    build: .
+    environment:
+      - TEST_URL=http://wordpress:80
+      - HEADLESS=true
+    depends_on:
+      - wordpress
+    volumes:
+      - .:/app
+      - ../:/app/plugin
+
+volumes:
+  db_data:

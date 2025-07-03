@@ -30,15 +30,16 @@ class SP_Merge_Admin {
         // Validate plugin URL constant
         if (!defined('SP_MERGE_PLUGIN_URL') || !defined('SP_MERGE_VERSION')) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Plugin constants not defined");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Plugin constants not defined", intval($user_id)));
+            }
             return;
         }
         
         wp_enqueue_script('jquery');
         
-        // Check CSS file exists before enqueueing
-        $css_path = SP_MERGE_PLUGIN_PATH . 'assets/css/admin.css';
-        if (file_exists($css_path)) {
+        // Securely check CSS file exists
+        if ($this->is_safe_plugin_file('assets/css/admin.css')) {
             wp_enqueue_style(
                 'sp-merge-admin-css',
                 SP_MERGE_PLUGIN_URL . 'assets/css/admin.css',
@@ -47,12 +48,13 @@ class SP_Merge_Admin {
             );
         } else {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: CSS file not found: " . $css_path);
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: CSS file not found or invalid", intval($user_id)));
+            }
         }
         
-        // Check JS file exists before enqueueing
-        $js_path = SP_MERGE_PLUGIN_PATH . 'assets/js/admin.js';
-        if (file_exists($js_path)) {
+        // Securely check JS file exists
+        if ($this->is_safe_plugin_file('assets/js/admin.js')) {
             wp_enqueue_script(
                 'sp-merge-admin-js',
                 SP_MERGE_PLUGIN_URL . 'assets/js/admin.js',
@@ -64,11 +66,15 @@ class SP_Merge_Admin {
             wp_localize_script('sp-merge-admin-js', 'spMergeAjax', [
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('sp_merge_nonce'),
-                'strings' => $this->get_localized_strings()
+                'strings' => $this->get_localized_strings(),
+                'debug' => defined('WP_DEBUG') && WP_DEBUG,
+                'userCanEdit' => current_user_can('edit_sp_players')
             ]);
         } else {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: JS file not found: " . $js_path);
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: JS file not found or invalid", intval($user_id)));
+            }
         }
     }
 
@@ -79,53 +85,40 @@ class SP_Merge_Admin {
         }
         
         $players = $this->get_all_players();
-        if ($players === false) {
+        if ($players === null) {
             wp_die(__('Error: Unable to load player data. Please try again.', 'sportspress-player-merge'));
         }
         
-        try {
-            $template_path = $this->get_secure_template_path();
-            if ($template_path && $this->is_safe_to_include($template_path)) {
-                include $template_path;
-            } else {
-                wp_die(__('Error: Admin page template not found or invalid.', 'sportspress-player-merge'));
-            }
-        } catch (Exception $e) {
-            $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Template inclusion failed - " . $e->getMessage());
-            wp_die(__('Error: Unable to load admin page template.', 'sportspress-player-merge'));
+        $template_path = $this->get_secure_template_path();
+        if ($template_path) {
+            include $template_path;
+        } else {
+            wp_die(__('Error: Admin page template not found or invalid.', 'sportspress-player-merge'));
         }
     }
 
     
-    private function get_secure_template_path() {
-        $template_file = 'admin-page.php';
-        $template_path = SP_MERGE_PLUGIN_PATH . 'includes/' . $template_file;
-        
-        // Ensure path is within plugin directory
-        $real_plugin_path = realpath(SP_MERGE_PLUGIN_PATH);
-        $real_template_path = realpath($template_path);
-        
-        if ($real_template_path && 
-            strpos($real_template_path, $real_plugin_path) === 0 && 
-            file_exists($real_template_path) && 
-            validate_file($real_template_path) === 0) {
-            return $real_template_path;
+    private function is_safe_plugin_file($relative_path) {
+        if (!defined('SP_MERGE_PLUGIN_PATH') || empty($relative_path)) {
+            return false;
         }
         
-        return false;
-    }
-    
-    private function is_safe_to_include($file_path) {
-        // Final safety check before inclusion
+        $full_path = SP_MERGE_PLUGIN_PATH . $relative_path;
         $real_plugin_path = realpath(SP_MERGE_PLUGIN_PATH);
-        $real_file_path = realpath($file_path);
+        $real_file_path = realpath($full_path);
         
         return ($real_file_path && 
+                $real_plugin_path &&
                 strpos($real_file_path, $real_plugin_path) === 0 && 
                 file_exists($real_file_path) && 
-                is_readable($real_file_path) && 
-                pathinfo($real_file_path, PATHINFO_EXTENSION) === 'php');
+                validate_file($real_file_path) === 0);
+    }
+    
+    private function get_secure_template_path() {
+        if ($this->is_safe_plugin_file('includes/admin-page.php')) {
+            return SP_MERGE_PLUGIN_PATH . 'includes/admin-page.php';
+        }
+        return false;
     }
     
     private function get_all_players() {
@@ -141,8 +134,8 @@ class SP_Merge_Admin {
             $player_posts = get_posts($args);
             if ($player_posts === false) {
                 $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Failed to retrieve players from database");
-                return false;
+                error_log(sprintf("SP Merge [User: %d]: Failed to retrieve players from database", intval($user_id)));
+                return null;
             }
             
             if (empty($player_posts)) {
@@ -158,8 +151,8 @@ class SP_Merge_Admin {
             
         } catch (Exception $e) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Exception in get_all_players(): " . $e->getMessage());
-            return false;
+            error_log(sprintf("SP Merge [User: %d]: Exception in get_all_players(): %s", intval($user_id), $e->getMessage()));
+            return null;
         }
     }
     
@@ -169,9 +162,9 @@ class SP_Merge_Admin {
         $table_name = $wpdb->prefix . 'sp_merge_backups';
         
         // Check if backup table exists
-        if ($wpdb->get_var("SHOW TABLES LIKE '{$table_name}'") !== $table_name) {
+        if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name)) !== $table_name) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Backup table does not exist: " . $table_name);
+            error_log(sprintf("SP Merge [User: %d]: Backup table does not exist: %s", intval($user_id), $table_name));
             return [];
         }
         
@@ -179,16 +172,17 @@ class SP_Merge_Admin {
             "SELECT backup_id, user_id, created_at, 
                     JSON_EXTRACT(backup_data, '$.primary_name') as primary_name,
                     JSON_EXTRACT(backup_data, '$.duplicate_names') as duplicate_names
-             FROM {$table_name} 
+             FROM `%1s` 
              WHERE user_id = %d 
              ORDER BY created_at DESC 
              LIMIT 10",
+            $table_name,
             get_current_user_id()
         ));
         
         if ($results === null) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Database error in get_recent_backups(): " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Database error in get_recent_backups(): %s", intval($user_id), $wpdb->last_error));
             return false;
         }
         

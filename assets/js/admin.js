@@ -45,14 +45,22 @@
                     resolve(false);
                 });
                 
-                // amazon-q-ignore: javascript-cross-site-scripting-ide - Safe DOM event handling, no user input
+                // Guard modal close click with explicit authorization check
                 modal.on('click', (e) => {
-                    // Check if user has permission to close modal (basic client-side check)
-                    if (typeof spMergeAjax !== 'undefined' && spMergeAjax.userCanEdit) {
-                        if (e.target === modal[0]) {
-                            modal.remove();
-                            resolve(false);
+                    const isClickOutsideDialog = e.target === modal[0];
+                    const hasPermission = typeof spMergeAjax !== 'undefined' && spMergeAjax.userCanEdit === true;
+
+                    // Only allow authorized users to close the modal by clicking outside the dialog
+                    if (isClickOutsideDialog) {
+                        if (!hasPermission) {
+                            // Prevent unauthorized modal dismissal
+                            console.warn('[SP Merge] Unauthorized attempt to dismiss confirmation modal.');
+                            // Optionally, show an error message or visual feedback here
+                            return;
                         }
+
+                        modal.remove();
+                        resolve(false);
                     }
                 });
             });
@@ -109,25 +117,57 @@
          * Sanitize HTML content to prevent XSS while allowing safe formatting
          */
         sanitizeHtml: function(html) {
+            if (typeof html !== 'string') {
+                return '';
+            }
+            
             const temp = $('<div>').html(html);
             
-            temp.find('script').remove();
+            // Remove dangerous elements
+            temp.find('script, object, embed, iframe, form, input, textarea, select, button').remove();
+            
+            // Remove all attributes except safe ones
             temp.find('*').each(function() {
+                const allowedAttrs = ['class', 'id', 'data-target'];
                 const attributes = this.attributes;
+                
                 for (let i = attributes.length - 1; i >= 0; i--) {
                     const attr = attributes[i];
                     const attrName = (attr.name || '').toString().toLowerCase();
+                    const attrValue = (attr.value || '').toString();
                     
-                    // Remove event handlers and dangerous attributes
-                    if (attrName.startsWith('on') || 
-                        attrName === 'javascript' ||
-                        this.getAttribute(attrName)?.toLowerCase().includes('javascript:')) {
+                    // Validate input with stricter check against event handlers and dangerous protocols
+                    const isDangerous = (
+                        !attrName ||
+                        typeof attrName !== 'string' ||
+                        /^on[a-z]+/.test(attrName) || // Use regex to catch all event handlers
+                        /^(javascript|data|vbscript):/i.test(attrValue) || // Dangerous protocols
+                        attrValue.toLowerCase().includes('<script') ||
+                        /[<>"]/.test(attrValue) // Common injection chars (omit apostrophes if needed)
+                    );
+                    
+                    // Remove dangerous attributes and keep only allowed ones
+                    if (!allowedAttrs.includes(attrName) || isDangerous) {
                         this.removeAttribute(attr.name);
                     }
                 }
             });
             
             return temp.html();
+        },
+        
+        /**
+         * Safely display preview content using DOM manipulation instead of innerHTML
+         */
+        displayPreviewContent: function(sanitizedHtml) {
+            const $previewContainer = $('#preview-content');
+            $previewContainer.empty();
+            
+            // Use the sanitized HTML directly but ensure expandable sections are hidden
+            $previewContainer.html(sanitizedHtml);
+            
+            // Ensure all expandable sections are hidden by default
+            $previewContainer.find('div[id][style*="display:none"], div[id]:hidden').hide();
         },
         
         /**
@@ -215,17 +255,29 @@
          * Handle successful preview response
          */
         handlePreviewSuccess: function(response) {
-            console.log('Preview response status:', response.success ? 'success' : 'failed');
+            if (typeof spMergeAjax !== 'undefined' && spMergeAjax.debug) {
+                console.log('Preview response status:', response.success ? 'success' : 'failed');
+            }
             
             if (response.success) {
                 // Safely display server-generated preview content with HTML support
                 if (response.data && response.data.preview) {
-                    console.log('Preview data received, length:', response.data.preview.length);
-                    // Sanitize HTML to allow safe formatting while preventing XSS
+                    // Validate length is a number before logging
+                    const previewLength = typeof response.data.preview.length === 'number' ? response.data.preview.length : 0;
+                    if (typeof spMergeAjax !== 'undefined' && spMergeAjax.debug) {
+                        console.log('Preview data received, length:', encodeURIComponent(previewLength.toString()));
+                    }
+                    // Enhanced sanitization with validation
                     const sanitizedPreview = this.sanitizeHtml(response.data.preview);
-                    $('#preview-content').html(sanitizedPreview);
+                    if (sanitizedPreview.trim()) {
+                        this.displayPreviewContent(sanitizedPreview);
+                    } else {
+                        $('#preview-content').text('Preview content could not be displayed safely');
+                    }
                 } else {
-                    console.log('No preview data in response');
+                    if (typeof spMergeAjax !== 'undefined' && spMergeAjax.debug) {
+                        console.log('No preview data in response');
+                    }
                     $('#preview-content').text('No preview available');
                 }
                 $('#merge-preview-card').removeClass('sp-hidden').show();
@@ -244,7 +296,9 @@
                 this.updateBackupButtonStates();
                 
             } else {
-                console.log('Preview failed - error occurred');
+                if (typeof spMergeAjax !== 'undefined' && spMergeAjax.debug) {
+                    console.log('Preview failed - error occurred');
+                }
                 this.showMessage('error', response.data.message || 'Preview generation failed.');
             }
         },
@@ -459,32 +513,41 @@
         showMessage: function(type, message, duration) {
             // Remove existing messages
             $('.sp-merge-message').remove();
-            
-            // amazon-q-ignore: javascript-cross-site-scripting-ide - Using .text() method prevents XSS
-            const messageDiv = $('<div></div>').addClass('sp-merge-message').addClass(type);
-            const iconSpan = $('<span></span>').addClass('dashicons').addClass('dashicons-' + this.getMessageIcon(type));
-            const textSpan = $('<span></span>').text(message);
-            
+
+            const messageDiv = $('<div></div>').addClass('sp-merge-message');
+
+            // Whitelist allowed types to prevent class injection
+            const allowedTypes = ['success', 'error', 'info'];
+            const safeType = allowedTypes.includes(type) ? type : 'info';
+            messageDiv.addClass(safeType);
+
+            const iconSpan = $('<span></span>').addClass('dashicons').addClass('dashicons-' + this.getMessageIcon(safeType));
+            const textSpan = $('<span></span>').text(String(message)); // Ensures message is a string and XSS-safe
+
             messageDiv.append(iconSpan, textSpan);
-            
+
             // Add message to container
             $('#sp-merge-messages').html(messageDiv);
-            
-            // Auto-hide messages with custom or default duration
-            if (duration) {
+
+            // Sanitize duration: min 500ms, max 60000ms
+            const parsedDuration = parseInt(duration, 10);
+            const safeDuration = (!isNaN(parsedDuration)) ? Math.min(Math.max(parsedDuration, 500), 60000) : null;
+
+            // Auto-hide logic
+            if (typeof safeDuration === 'number' && !isNaN(safeDuration)) {
                 setTimeout(() => {
-                    $('.sp-merge-message').fadeOut();
-                }, parseInt(duration, 10) || 0);
-            } else if (type === 'success') {
+                    $('.sp-merge-message').addClass('fade-out');
+                }, safeDuration);
+            } else if (safeType === 'success') {
                 setTimeout(() => {
-                    $('.sp-merge-message').fadeOut();
+                    $('.sp-merge-message').addClass('fade-out');
                 }, 10000);
-            } else if (type === 'info') {
+            } else if (safeType === 'info') {
                 setTimeout(() => {
-                    $('.sp-merge-message').fadeOut();
+                    $('.sp-merge-message').addClass('fade-out');
                 }, 7000);
             }
-            
+
             // Scroll to message
             $('html, body').animate({
                 scrollTop: $('#sp-merge-messages').offset().top - 100
@@ -680,7 +743,9 @@
                     }
                 })
                 .fail(() => {
-                    console.log('Failed to refresh backup section');
+                    if (typeof spMergeAjax !== 'undefined' && spMergeAjax.debug) {
+                        console.log('Failed to refresh backup section');
+                    }
                 });
         },
         

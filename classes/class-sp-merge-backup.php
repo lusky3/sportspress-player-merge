@@ -27,7 +27,7 @@ class SP_Merge_Backup {
             
         } catch (Exception $e) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Backup creation failed - " . $e->getMessage());
+            error_log(sprintf("SP Merge [User: %d]: Backup creation failed - %s", intval($user_id), $e->getMessage()));
             throw new Exception(__('Backup creation failed', 'sportspress-player-merge') . ': ' . $e->getMessage());
         }
     }
@@ -76,7 +76,7 @@ class SP_Merge_Backup {
             $user_id = get_current_user_id();
             $sanitized_error = sanitize_text_field($wpdb->last_error);
             if (defined('WP_DEBUG') && WP_DEBUG) {
-                wp_debug_log("SP Merge [User: " . intval($user_id) . "]: Failed to save backup {$backup_id} to database - Error: {$sanitized_error}");
+                error_log(sprintf("SP Merge [User: %d]: Failed to save backup %s to database - Error: %s", intval($user_id), $backup_id, $sanitized_error));
             }
             throw new Exception(__('Failed to create backup', 'sportspress-player-merge'));
         }
@@ -99,7 +99,7 @@ class SP_Merge_Backup {
             
         } catch (Exception $e) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Revert failed - " . $e->getMessage());
+            error_log(sprintf("SP Merge [User: %d]: Revert failed - %s", intval($user_id), $e->getMessage()));
             return ['success' => false, 'message' => __('Revert failed', 'sportspress-player-merge') . ': ' . $e->getMessage()];
         }
     }
@@ -128,34 +128,44 @@ class SP_Merge_Backup {
             if (isset($duplicate_backup['post_data'])) {
                 $result = $this->recreate_player($duplicate_id, $duplicate_backup);
                 if (!$result) {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Failed to recreate player " . intval($duplicate_id));
+                    error_log(sprintf("SP Merge [User: %d]: Failed to recreate player %d", intval($user_id), intval($duplicate_id)));
                     throw new Exception("Failed to recreate player " . intval($duplicate_id));
                 }
             }
         }
         
         // Then restore the primary player to original state
-        error_log("SP Merge [User: " . intval($user_id) . "]: Attempting to restore primary player " . intval($backup_data['primary_id']));
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf("SP Merge [User: %d]: Attempting to restore primary player %d", intval($user_id), intval($backup_data['primary_id'])));
+        }
         $result = $this->restore_player_data($backup_data['primary_id'], $backup_data['primary_backup']);
         if (!$result) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to restore primary player " . intval($backup_data['primary_id']));
+            error_log(sprintf("SP Merge [User: %d]: Failed to restore primary player %d", intval($user_id), intval($backup_data['primary_id'])));
             throw new Exception("Failed to restore primary player " . intval($backup_data['primary_id']));
         }
-        error_log("SP Merge [User: " . intval($user_id) . "]: Primary player " . intval($backup_data['primary_id']) . " restored successfully");
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf("SP Merge [User: %d]: Primary player %d restored successfully", intval($user_id), intval($backup_data['primary_id'])));
+        }
         
         // Finally revert all references back to original players
         if (isset($backup_data['reference_changes'])) {
             foreach ($backup_data['reference_changes'] as $duplicate_id => $references) {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Reverting references for duplicate player " . intval($duplicate_id));
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log(sprintf("SP Merge [User: %d]: Reverting references for duplicate player %d", intval($user_id), intval($duplicate_id)));
+                }
                 $result = $this->revert_references($backup_data['primary_id'], $duplicate_id, $references);
                 if (!$result) {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Failed to revert references for player " . intval($duplicate_id));
+                    error_log(sprintf("SP Merge [User: %d]: Failed to revert references for player %d", intval($user_id), intval($duplicate_id)));
                     throw new Exception("Failed to revert references for player " . intval($duplicate_id));
                 }
-                error_log("SP Merge [User: " . intval($user_id) . "]: Successfully reverted references for player " . intval($duplicate_id));
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log(sprintf("SP Merge [User: %d]: Successfully reverted references for player %d", intval($user_id), intval($duplicate_id)));
+                }
             }
         } else {
-            error_log("SP Merge [User: " . intval($user_id) . "]: No reference changes found in backup data");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: No reference changes found in backup data", intval($user_id)));
+            }
         }
     }
     
@@ -166,7 +176,7 @@ class SP_Merge_Backup {
         $result = $wpdb->delete($table_name, ['backup_id' => $backup_id], ['%s']);
         if ($result === false) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to delete backup during cleanup - " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Failed to delete backup during cleanup - %s", intval($user_id), $wpdb->last_error));
         }
         delete_user_meta(get_current_user_id(), 'sp_last_merge_backup');
     }
@@ -194,7 +204,7 @@ class SP_Merge_Backup {
                 }
             } else {
                 $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Failed to delete backups - " . $wpdb->last_error);
+                error_log(sprintf("SP Merge [User: %d]: Failed to delete backups - %s", intval($user_id), $wpdb->last_error));
             }
         }
         
@@ -235,7 +245,7 @@ class SP_Merge_Backup {
         
         if ($term_relationships === false) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Database error in backup_player_data - " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Database error in backup_player_data - %s", intval($user_id), $wpdb->last_error));
             $term_relationships = [];
         }
         
@@ -289,7 +299,7 @@ class SP_Merge_Backup {
         
         if ($results === false) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Database error in find_references - " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Database error in find_references - %s", intval($user_id), $wpdb->last_error));
             return [];
         }
         
@@ -300,11 +310,15 @@ class SP_Merge_Backup {
         global $wpdb;
         $user_id = get_current_user_id();
         
-        error_log("SP Merge [User: " . intval($user_id) . "]: Starting reference reversion for player " . intval($duplicate_id) . " (primary: " . intval($primary_id) . ")");
-        error_log("SP Merge [User: " . intval($user_id) . "]: Found " . count($references) . " reference records to process");
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf("SP Merge [User: %d]: Starting reference reversion for player %d (primary: %d)", intval($user_id), intval($duplicate_id), intval($primary_id)));
+            error_log(sprintf("SP Merge [User: %d]: Found %d reference records to process", intval($user_id), count($references)));
+        }
         
         if (empty($references)) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: No references to revert for player " . intval($duplicate_id));
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: No references to revert for player %d", intval($user_id), intval($duplicate_id)));
+            }
             return true;
         }
         
@@ -314,7 +328,9 @@ class SP_Merge_Backup {
             $meta_key = is_object($ref) ? $ref->meta_key : $ref['meta_key'];
             $original_value = is_object($ref) ? $ref->meta_value : $ref['meta_value'];
             
-            error_log("SP Merge [User: " . intval($user_id) . "]: Processing reference - Post: " . intval($post_id) . ", Key: {$meta_key}");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Processing reference - Post: %d, Key: %s", intval($user_id), intval($post_id), $meta_key));
+            }
             
             // Find current references that point to primary_id and change them back to duplicate_id
             $current_refs = $wpdb->get_results($wpdb->prepare(
@@ -326,11 +342,13 @@ class SP_Merge_Backup {
             ));
             
             if ($current_refs === false) {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Database error finding current references - " . $wpdb->last_error);
+                error_log(sprintf("SP Merge [User: %d]: Database error finding current references - %s", intval($user_id), $wpdb->last_error));
                 return false;
             }
             
-            error_log("SP Merge [User: " . intval($user_id) . "]: Found " . count($current_refs) . " current references to update");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Found %d current references to update", intval($user_id), count($current_refs)));
+            }
             
             if (!empty($current_refs)) {
                 if (!$this->batch_update_references($current_refs, $primary_id, $duplicate_id, $post_id)) {
@@ -339,7 +357,9 @@ class SP_Merge_Backup {
             }
         }
         
-        error_log("SP Merge [User: " . intval($user_id) . "]: Successfully reverted all references for player " . intval($duplicate_id));
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(sprintf("SP Merge [User: %d]: Successfully reverted all references for player %d", intval($user_id), intval($duplicate_id)));
+        }
         return true;
     }
     
@@ -347,7 +367,7 @@ class SP_Merge_Backup {
         $user_id = get_current_user_id();
         
         if (!isset($backup_data['meta_data']) || !isset($backup_data['taxonomies'])) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Missing backup data for player " . intval($player_id));
+            error_log(sprintf("SP Merge [User: %d]: Missing backup data for player %d", intval($user_id), intval($player_id)));
             return false;
         }
         
@@ -360,10 +380,12 @@ class SP_Merge_Backup {
                 $this->recalculate_statistics($player_id);
             }
             
-            error_log("SP Merge [User: " . intval($user_id) . "]: Successfully restored player data for " . intval($player_id));
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Successfully restored player data for %d", intval($user_id), intval($player_id)));
+            }
             return true;
         } catch (Exception $e) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to restore player data for " . intval($player_id) . " - " . $e->getMessage());
+            error_log(sprintf("SP Merge [User: %d]: Failed to restore player data for %d - %s", intval($user_id), intval($player_id), $e->getMessage()));
             return false;
         }
     }
@@ -409,7 +431,7 @@ class SP_Merge_Backup {
         
         if ($result === false) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to clear SP meta for player " . intval($player_id) . " - " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Failed to clear SP meta for player %d - %s", intval($user_id), intval($player_id), $wpdb->last_error));
             return false;
         }
         return true;
@@ -512,7 +534,7 @@ class SP_Merge_Backup {
     
     private function log_taxonomy_error($action, $taxonomy, $player_id) {
         $user_id = get_current_user_id();
-        error_log("SP Merge [User: " . intval($user_id) . "]: Failed to {$action} taxonomy {$taxonomy} for player " . intval($player_id));
+        error_log(sprintf("SP Merge [User: %d]: Failed to %s taxonomy %s for player %d", intval($user_id), $action, $taxonomy, intval($player_id)));
     }
     
     private function batch_update_references($current_refs, $primary_id, $duplicate_id, $post_id) {
@@ -526,7 +548,9 @@ class SP_Merge_Backup {
             $new_value = str_replace($primary_id, $duplicate_id, $current_ref->meta_value);
             $cases[] = $wpdb->prepare("WHEN %d THEN %s", $current_ref->meta_id, $new_value);
             $meta_ids[] = intval($current_ref->meta_id);
-            error_log("SP Merge [User: " . intval($user_id) . "]: Updating meta_id " . intval($current_ref->meta_id) . " from '{$current_ref->meta_value}' to '{$new_value}'");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Updating meta_id %d from '%s' to '%s'", intval($user_id), intval($current_ref->meta_id), $current_ref->meta_value, $new_value));
+            }
         }
         
         if (!empty($cases) && !empty($meta_ids)) {
@@ -534,15 +558,19 @@ class SP_Merge_Backup {
             $ids_sql = implode(',', $meta_ids);
             
             $sql = "UPDATE {$wpdb->postmeta} SET meta_value = CASE meta_id {$cases_sql} END WHERE meta_id IN ({$ids_sql})";
-            error_log("SP Merge [User: " . intval($user_id) . "]: Executing SQL: {$sql}");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Executing SQL: %s", intval($user_id), $sql));
+            }
             $result = $wpdb->query($sql);
             
             if ($result === false) {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Failed to batch update references for post " . intval($post_id) . " - " . $wpdb->last_error);
+                error_log(sprintf("SP Merge [User: %d]: Failed to batch update references for post %d - %s", intval($user_id), intval($post_id), $wpdb->last_error));
                 return false;
             }
             
-            error_log("SP Merge [User: " . intval($user_id) . "]: Successfully updated " . intval($result) . " reference records");
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf("SP Merge [User: %d]: Successfully updated %d reference records", intval($user_id), intval($result)));
+            }
         }
         
         return true;
@@ -610,7 +638,7 @@ class SP_Merge_Backup {
         
         if ($result === false) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to recreate player " . intval($original_id) . " - " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Failed to recreate player %d - %s", intval($user_id), intval($original_id), $wpdb->last_error));
             return false;
         }
         
@@ -633,7 +661,9 @@ class SP_Merge_Backup {
                 }
             } catch (Exception $e) {
                 $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Failed to recalculate statistics for player " . intval($player_id) . " - " . $e->getMessage());
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log(sprintf("SP Merge [User: %d]: Failed to recalculate statistics for player %d - %s", intval($user_id), intval($player_id), $e->getMessage()));
+                }
             }
         }
     }
@@ -649,7 +679,7 @@ class SP_Merge_Backup {
         
         if ($result === false) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to cleanup old backups - " . $wpdb->last_error);
+            error_log(sprintf("SP Merge [User: %d]: Failed to cleanup old backups - %s", intval($user_id), $wpdb->last_error));
         }
     }
 }

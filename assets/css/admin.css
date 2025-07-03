@@ -309,12 +309,19 @@
     background: #f8d7da;
     border: 1px solid #f5c2c7;
     color: #842029;
+    padding: 12px 16px;
 }
 
 .sp-merge-message.info {
     background: #cff4fc;
     border: 1px solid #b6effb;
     color: #055160;
+}
+
+.sp-merge-message.fade-out {
+    opacity: 0;
+    transition: opacity 0.5s ease-out;
+    pointer-events: none;
 }
 
 /* Loading Overlay */
@@ -458,6 +465,12 @@
 /* Utility Classes */
 .sp-hidden {
     display: none !important;
+}
+
+/* Message fade animation */
+.sp-merge-message {
+    opacity: 1;
+    transition: opacity 0.5s ease-out;
 }
 
 /* Tooltip for disabled buttons */

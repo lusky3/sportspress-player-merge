@@ -16,56 +16,62 @@ class SP_Merge_Ajax {
     }
     
     public function preview_merge() {
-        $user_id = get_current_user_id();
-        error_log("SP Merge [User: " . intval($user_id) . "]: Preview merge requested");
-        
         if (!$this->validate_request()) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Request validation failed");
             return;
         }
         
         $input = $this->validate_merge_input();
         if (!$input) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Input validation failed");
             return;
         }
         
-        error_log("SP Merge [User: " . intval($user_id) . "]: Generating preview - Primary: {$input['primary_id']}, Duplicates: " . implode(',', $input['duplicate_ids']));
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Generating preview - Primary: %d, Duplicates: %s", intval($user_id), $input['primary_id'], implode(',', $input['duplicate_ids'])));
+        }
         
         try {
             $preview = new SP_Merge_Preview();
             $preview_data = $preview->generate($input['primary_id'], $input['duplicate_ids']);
-            error_log("SP Merge [User: " . intval($user_id) . "]: Preview generated successfully");
+            
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                $user_id = get_current_user_id();
+                error_log(sprintf("SP Merge [User: %d]: Preview generated successfully", intval($user_id)));
+            }
+            
             wp_send_json_success(['preview' => $preview_data]);
         } catch (Exception $e) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Preview generation failed - " . $e->getMessage());
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Preview generation failed - %s", intval($user_id), $e->getMessage()));
             $this->send_error(__('Preview generation failed', 'sportspress-player-merge'), $e->getMessage());
         }
     }
     
     public function execute_merge() {
-        $user_id = get_current_user_id();
-        error_log("SP Merge [User: " . intval($user_id) . "]: Merge execution requested");
-        
         if (!$this->validate_request()) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Request validation failed");
             return;
         }
         
         $input = $this->validate_merge_input();
         if (!$input) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Input validation failed");
             return;
         }
         
-        error_log("SP Merge [User: " . intval($user_id) . "]: Executing merge - Primary: {$input['primary_id']}, Duplicates: " . implode(',', $input['duplicate_ids']));
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Executing merge - Primary: %d, Duplicates: %s", intval($user_id), $input['primary_id'], implode(',', $input['duplicate_ids'])));
+        }
         
         try {
             $processor = new SP_Merge_Processor();
             $result = $processor->execute_merge($input['primary_id'], $input['duplicate_ids']);
             
             if ($result['success']) {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Merge completed successfully");
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: Merge completed successfully", intval($user_id)));
+                }
+                
                 wp_send_json_success([
                     'message' => __('Merge completed successfully', 'sportspress-player-merge'),
                     'backup_id' => $result['backup_id']
@@ -74,40 +80,44 @@ class SP_Merge_Ajax {
                 $this->send_error($result['message']);
             }
         } catch (Exception $e) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Merge execution failed - " . $e->getMessage());
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Merge execution failed - %s", intval($user_id), $e->getMessage()));
             $this->send_error(__('Merge operation failed', 'sportspress-player-merge'), $e->getMessage());
         }
     }
     
     public function revert_merge() {
-        $user_id = get_current_user_id();
-        error_log("SP Merge [User: " . intval($user_id) . "]: Revert merge requested");
-        
         if (!$this->validate_request()) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Request validation failed");
             return;
         }
         
         $backup_id = $this->get_backup_id();
         if (!$backup_id) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: No backup ID found for revert");
             return;
         }
         
-        error_log("SP Merge [User: " . intval($user_id) . "]: Reverting backup ID: {$backup_id}");
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Reverting backup ID: %s", intval($user_id), $backup_id));
+        }
         
         try {
             $backup = new SP_Merge_Backup();
             $result = $backup->revert($backup_id);
             
             if ($result['success']) {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Revert completed successfully");
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $user_id = get_current_user_id();
+                    error_log(sprintf("SP Merge [User: %d]: Revert completed successfully", intval($user_id)));
+                }
+                
                 wp_send_json_success(['message' => __('Merge reverted successfully', 'sportspress-player-merge')]);
             } else {
                 $this->send_error($result['message']);
             }
         } catch (Exception $e) {
-            error_log("SP Merge [User: " . intval($user_id) . "]: Revert failed - " . $e->getMessage());
+            $user_id = get_current_user_id();
+            error_log(sprintf("SP Merge [User: %d]: Revert failed - %s", intval($user_id), $e->getMessage()));
             $this->send_error(__('Revert operation failed', 'sportspress-player-merge'), $e->getMessage());
         }
     }
@@ -135,7 +145,7 @@ class SP_Merge_Ajax {
             wp_send_json_success(['message' => sprintf(__('%d backup(s) deleted successfully', 'sportspress-player-merge'), $deleted_count)]);
         } catch (Exception $e) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Delete backup failed - " . $e->getMessage());
+            error_log(sprintf("SP Merge [User: %d]: Delete backup failed - %s", intval($user_id), $e->getMessage()));
             $this->send_error(__('Delete operation failed', 'sportspress-player-merge'), $e->getMessage());
         }
     }
@@ -179,7 +189,7 @@ class SP_Merge_Ajax {
             wp_send_json_success(['html' => $html]);
         } catch (Exception $e) {
             $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Get recent backups failed - " . $e->getMessage());
+            error_log(sprintf("SP Merge [User: %d]: Get recent backups failed - %s", intval($user_id), $e->getMessage()));
             $this->send_error(__('Failed to load backups', 'sportspress-player-merge'), $e->getMessage());
         }
     }
