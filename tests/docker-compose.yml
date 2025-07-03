@@ -35,6 +35,7 @@ services:
     volumes:
       - .:/app
       - ../:/app/plugin
+    command: sh -c "npm install && npm test"
 
 volumes:
   db_data:

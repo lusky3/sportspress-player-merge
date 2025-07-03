@@ -6,6 +6,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const SPDataSetup = require('./data-setup');
 
 class SPMergeTestRunner {
     constructor() {
@@ -25,7 +26,10 @@ class SPMergeTestRunner {
         await this.waitForWordPress();
         await this.setupWordPress();
         await this.installPlugins();
-        await this.createTestData();
+        
+        // Use REST API for efficient data setup
+        this.dataSetup = new SPDataSetup(this.baseUrl);
+        this.testData = await this.dataSetup.setup();
     }
 
     async waitForWordPress() {
@@ -85,62 +89,7 @@ class SPMergeTestRunner {
         }
     }
 
-    async createTestData() {
-        console.log('🏗️ Creating test data...');
-        await this.createLeaguesAndSeasons();
-        await this.createTeams();
-        await this.createPlayers();
-        await this.createEvents();
-        await this.createPlayerLists();
-    }
 
-    async createLeaguesAndSeasons() {
-        // Create via WordPress admin
-        await this.page.goto(`${this.baseUrl}/wp-admin/edit-tags.php?taxonomy=sp_league&post_type=sp_player`);
-        await this.page.fill('#tag-name', 'Test League');
-        await this.page.click('#submit');
-        
-        await this.page.goto(`${this.baseUrl}/wp-admin/edit-tags.php?taxonomy=sp_season&post_type=sp_player`);
-        await this.page.fill('#tag-name', '2024');
-        await this.page.click('#submit');
-    }
-
-    async createTeams() {
-        const teams = ['Team A', 'Team B'];
-        for (const team of teams) {
-            await this.page.goto(`${this.baseUrl}/wp-admin/post-new.php?post_type=sp_team`);
-            await this.page.fill('#title', team);
-            await this.page.click('#publish');
-        }
-    }
-
-    async createPlayers() {
-        const players = [
-            { name: 'John Doe', number: 10 },
-            { name: 'John Doe', number: 10 }, // Duplicate
-            { name: 'Jane Smith', number: 11 },
-            { name: 'Bob Wilson', number: 12 }
-        ];
-        
-        for (const player of players) {
-            await this.page.goto(`${this.baseUrl}/wp-admin/post-new.php?post_type=sp_player`);
-            await this.page.fill('#title', player.name);
-            await this.page.fill('[name="sp_number"]', player.number.toString());
-            await this.page.click('#publish');
-        }
-    }
-
-    async createEvents() {
-        await this.page.goto(`${this.baseUrl}/wp-admin/post-new.php?post_type=sp_event`);
-        await this.page.fill('#title', 'Test Match');
-        await this.page.click('#publish');
-    }
-
-    async createPlayerLists() {
-        await this.page.goto(`${this.baseUrl}/wp-admin/post-new.php?post_type=sp_list`);
-        await this.page.fill('#title', 'Team A Roster');
-        await this.page.click('#publish');
-    }
 
     async login() {
         await this.page.goto(`${this.baseUrl}/wp-admin`);
@@ -347,6 +296,7 @@ class SPMergeTestRunner {
     }
 
     async cleanup() {
+        if (this.dataSetup) await this.dataSetup.cleanup();
         if (this.browser) await this.browser.close();
     }
 
