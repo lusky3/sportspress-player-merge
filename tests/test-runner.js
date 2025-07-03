@@ -18,18 +18,25 @@ class SPMergeTestRunner {
     }
 
     async setup() {
-        this.browser = await chromium.launch({ 
-            headless: process.env.HEADLESS !== 'false',
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        this.page = await this.browser.newPage();
-        await this.waitForWordPress();
-        await this.setupWordPress();
-        await this.installPlugins();
-        
-        // Use REST API for efficient data setup
-        this.dataSetup = new SPDataSetup(this.baseUrl);
-        this.testData = await this.dataSetup.setup();
+        try {
+            this.browser = await chromium.launch({ 
+                headless: process.env.HEADLESS !== 'false',
+                args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            this.page = await this.browser.newPage();
+            await this.waitForWordPress();
+            await this.setupWordPress();
+            await this.installPlugins();
+            
+            // Use REST API for efficient data setup
+            this.dataSetup = new SPDataSetup(this.baseUrl);
+            this.testData = await this.dataSetup.setup();
+        } catch (error) {
+            console.error('❌ Setup failed:', error.message);
+            console.error('\n💡 This usually means Playwright browsers are not installed.');
+            console.error('   Run: npx playwright install chromium');
+            throw error;
+        }
     }
 
     async waitForWordPress() {
@@ -101,7 +108,14 @@ class SPMergeTestRunner {
 
     async runAllTests() {
         console.log('🚀 Starting Comprehensive Test Suite...\n');
-        await this.setup();
+        
+        try {
+            await this.setup();
+        } catch (error) {
+            console.log('🧹 Cleaning up test environment...');
+            await this.cleanup();
+            process.exit(1);
+        }
         
         // Core functionality tests
         await this.testSamePlayerMerge();
@@ -296,6 +310,7 @@ class SPMergeTestRunner {
     }
 
     async cleanup() {
+        console.log('🧹 Cleaning up test environment...');
         if (this.dataSetup) await this.dataSetup.cleanup();
         if (this.browser) await this.browser.close();
     }
@@ -321,7 +336,10 @@ class SPMergeTestRunner {
 
 if (require.main === module) {
     const runner = new SPMergeTestRunner();
-    runner.runAllTests().catch(console.error);
+    runner.runAllTests().catch(error => {
+        console.error('❌ Test runner failed:', error.message);
+        process.exit(1);
+    });
 }
 
 module.exports = SPMergeTestRunner;
