@@ -35,4 +35,4 @@ dist/
 # Environment files
 .env
 .env.local
-.env.production
+.env.production.playwright-mcp/
