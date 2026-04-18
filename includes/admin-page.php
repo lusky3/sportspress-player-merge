@@ -43,11 +43,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 							<span class="dashicons dashicons-star-filled"></span>
 							<?php esc_html_e( 'Primary Player (will be kept)', 'sportspress-player-merge' ); ?>
 						</label>
-						<select name="primary_player" id="primary-player" class="sp-form-select" required>
-							<option value=""><?php esc_html_e( 'Choose the player to keep...', 'sportspress-player-merge' ); ?></option>
-							<?php foreach ( $players as $player ) : ?>
-								<option value="<?php echo esc_attr( $player['id'] ); ?>"><?php echo esc_html( $player['name'] ); ?></option>
-							<?php endforeach; ?>
+						<select name="primary_player" id="primary-player" class="sp-player-search" data-placeholder="<?php esc_attr_e( 'Search for the player to keep...', 'sportspress-player-merge' ); ?>" required>
+							<option value=""></option>
 						</select>
 						<p class="sp-form-help"><?php esc_html_e( 'This player will retain all data and remain in the system.', 'sportspress-player-merge' ); ?></p>
 					</div>
@@ -58,21 +55,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 							<span class="dashicons dashicons-trash"></span>
 							<?php esc_html_e( 'Duplicate Players (will be merged and deleted)', 'sportspress-player-merge' ); ?>
 						</label>
-						<select name="duplicate_players[]" id="duplicate-players" class="sp-form-multiselect" multiple size="8">
-							<?php foreach ( $players as $player ) : ?>
-								<option value="<?php echo esc_attr( $player['id'] ); ?>"><?php echo esc_html( $player['name'] ); ?></option>
-							<?php endforeach; ?>
+						<select name="duplicate_players[]" id="duplicate-players" class="sp-player-search" data-placeholder="<?php esc_attr_e( 'Search for duplicate players...', 'sportspress-player-merge' ); ?>" multiple>
 						</select>
 						<p class="sp-form-help">
 							<span class="dashicons dashicons-info"></span>
-							<?php
-							printf(
-								/* translators: %1$s: Ctrl key, %2$s: Cmd key */
-								esc_html__( 'Hold %1$s (or %2$s on Mac) to select multiple players', 'sportspress-player-merge' ),
-								'<kbd>Ctrl</kbd>',
-								'<kbd>Cmd</kbd>'
-							);
-							?>
+							<?php esc_html_e( 'Type to search. Select up to 10 duplicate players.', 'sportspress-player-merge' ); ?>
 						</p>
 					</div>
 
