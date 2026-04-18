@@ -150,3 +150,7 @@ GPL v2 or later - see license.txt
 ## Support
 
 For issues and feature requests, please use the GitHub issue tracker.
+
+## AI Disclosure
+
+This plugin was developed with AI assistance (Kiro/Claude). All code has undergone multiple rounds of automated security, performance, SportsPress integration, and data integrity review.

@@ -116,3 +116,7 @@ Event box scores (sp_players), timelines (sp_timeline), star selections (sp_star
 
 = 0.3.0 =
 Major rewrite addressing security, data integrity, and SportsPress integration. Existing backups from v0.2.0 may not revert correctly. Take a database backup before upgrading.
+
+== AI Disclosure ==
+
+This plugin was developed with AI assistance (Kiro/Claude). All code has undergone multiple rounds of automated security, performance, SportsPress integration, and data integrity review.
