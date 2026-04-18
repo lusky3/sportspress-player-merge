@@ -90,7 +90,6 @@ class SP_Merge_Admin {
 			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'sportspress-player-merge' ) );
 		}
 
-		$players        = $this->get_all_players();
 		$recent_backups = $this->get_recent_backups();
 
 		$template_path = SP_MERGE_PLUGIN_PATH . 'includes/admin-page.php';

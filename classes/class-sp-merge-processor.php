@@ -126,15 +126,23 @@ class SP_Merge_Processor {
 	}
 
 	/**
-	 * Acquire a transient-based merge lock.
+	 * Acquire an atomic merge lock.
 	 *
 	 * @return bool True if lock acquired.
 	 */
 	private function acquire_lock(): bool {
+		// wp_cache_add is atomic — returns false if key already exists.
+		if ( wp_using_ext_object_cache() ) {
+			$acquired = wp_cache_add( self::LOCK_KEY, get_current_user_id(), 'sp_merge', 300 );
+			if ( ! $acquired ) {
+				return false;
+			}
+		}
+		// Also set transient as persistent fallback / for non-object-cache environments.
 		if ( get_transient( self::LOCK_KEY ) ) {
 			return false;
 		}
-		set_transient( self::LOCK_KEY, get_current_user_id(), 300 ); // 5 min max.
+		set_transient( self::LOCK_KEY, get_current_user_id(), 300 );
 		return true;
 	}
 
@@ -143,6 +151,7 @@ class SP_Merge_Processor {
 	 */
 	private function release_lock(): void {
 		delete_transient( self::LOCK_KEY );
+		wp_cache_delete( self::LOCK_KEY, 'sp_merge' );
 	}
 
 	/**
@@ -502,13 +511,21 @@ class SP_Merge_Processor {
 	private function update_player_list_references( int $primary_id, int $duplicate_id ): void {
 		global $wpdb;
 
-		// Find sp_list posts referencing the duplicate via sp_player meta.
+		$dup_str = (string) $duplicate_id;
+
+		// Find sp_list posts referencing the duplicate via sp_player simple meta
+		// OR via serialized sp_players meta (LIKE search as fallback).
 		$list_ids = $wpdb->get_col(
 			$wpdb->prepare(
-				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
-				WHERE meta_key = 'sp_player' AND meta_value = %s
-				AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'sp_list')",
-				(string) $duplicate_id
+				"SELECT DISTINCT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+				WHERE p.post_type = 'sp_list'
+				AND (
+					(pm.meta_key = 'sp_player' AND pm.meta_value = %s)
+					OR (pm.meta_key = 'sp_players' AND pm.meta_value LIKE %s)
+				)",
+				$dup_str,
+				'%' . $wpdb->esc_like( $dup_str ) . '%'
 			)
 		);
 
