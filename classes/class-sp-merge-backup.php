@@ -148,6 +148,7 @@ class SP_Merge_Backup {
 			'primary_backup'    => $this->backup_player_data( $primary_id ),
 			'duplicate_backups' => array(),
 			'affected_events'   => $this->backup_affected_event_meta( $duplicate_ids ),
+			'affected_lists'    => $this->backup_affected_list_meta( $duplicate_ids ),
 		);
 
 		foreach ( $duplicate_ids as $duplicate_id ) {
@@ -271,6 +272,78 @@ class SP_Merge_Backup {
 	}
 
 	/**
+	 * Backup sp_list meta that will be modified during merge.
+	 *
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return array Map of list_id => array of meta_key => original_value.
+	 */
+	private function backup_affected_list_meta( array $duplicate_ids ): array {
+		global $wpdb;
+
+		if ( empty( $duplicate_ids ) ) {
+			return array();
+		}
+
+		$affected = array();
+
+		foreach ( $duplicate_ids as $dup_id ) {
+			$dup_str  = (string) $dup_id;
+			$list_ids = $wpdb->get_col(
+				$wpdb->prepare(
+					"SELECT DISTINCT p.ID FROM {$wpdb->posts} p
+					INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+					WHERE p.post_type = 'sp_list'
+					AND (
+						(pm.meta_key = 'sp_player' AND pm.meta_value = %s)
+						OR (pm.meta_key = 'sp_players' AND pm.meta_value LIKE %s)
+					)",
+					$dup_str,
+					'%' . $wpdb->esc_like( $dup_str ) . '%'
+				)
+			);
+
+			foreach ( $list_ids as $list_id ) {
+				$list_id = (int) $list_id;
+				if ( isset( $affected[ $list_id ] ) ) {
+					continue;
+				}
+
+				$list_data = array();
+
+				// Backup sp_player simple meta rows.
+				$rows = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta}
+						WHERE post_id = %d AND meta_key = 'sp_player'",
+						$list_id
+					)
+				);
+				if ( ! empty( $rows ) ) {
+					$list_data['_simple_sp_player'] = array();
+					foreach ( $rows as $row ) {
+						$list_data['_simple_sp_player'][] = array(
+							'meta_id'    => (int) $row->meta_id,
+							'meta_value' => $row->meta_value,
+						);
+					}
+				}
+
+				// Backup serialized sp_players.
+				$sp_players = get_post_meta( $list_id, 'sp_players', true );
+				if ( ! empty( $sp_players ) ) {
+					$list_data['sp_players'] = $sp_players;
+				}
+
+				if ( ! empty( $list_data ) ) {
+					$affected[ $list_id ] = $list_data;
+				}
+			}
+		}
+
+		return $affected;
+	}
+
+	/**
 	 * Save backup to database.
 	 *
 	 * @param string $backup_id   Backup ID.
@@ -361,7 +434,30 @@ class SP_Merge_Backup {
 			}
 		}
 
-		// 2. Recreate deleted duplicate players.
+		// 2. Restore affected sp_list meta to original values.
+		if ( ! empty( $backup_data['affected_lists'] ) ) {
+			foreach ( $backup_data['affected_lists'] as $list_id => $list_entries ) {
+				$list_id = (int) $list_id;
+				foreach ( $list_entries as $meta_key => $original_value ) {
+					if ( '_simple_sp_player' === $meta_key ) {
+						foreach ( $original_value as $row ) {
+							$wpdb->update(
+								$wpdb->postmeta,
+								array( 'meta_value' => $row['meta_value'] ),
+								array( 'meta_id' => (int) $row['meta_id'] ),
+								array( '%s' ),
+								array( '%d' )
+							);
+						}
+					} else {
+						update_post_meta( $list_id, $meta_key, $original_value );
+					}
+				}
+				clean_post_cache( $list_id );
+			}
+		}
+
+		// 3. Recreate deleted duplicate players.
 		$primary_id    = (int) $backup_data['primary_id'];
 		$recreated_ids = array();
 
@@ -372,10 +468,10 @@ class SP_Merge_Backup {
 			}
 		}
 
-		// 3. Restore primary player to original state.
+		// 4. Restore primary player to original state.
 		$this->restore_player_data( $primary_id, $backup_data['primary_backup'] );
 
-		// 4. Clear SportsPress caches for all affected players.
+		// 5. Clear SportsPress caches for all affected players.
 		$all_player_ids = array_merge( array( $primary_id ), $recreated_ids );
 		foreach ( $all_player_ids as $pid ) {
 			clean_post_cache( $pid );

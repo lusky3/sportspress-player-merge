@@ -47,10 +47,26 @@ class SP_Merge_Admin {
 			SP_MERGE_VERSION
 		);
 
+		// Select2 for AJAX-powered player search.
+		wp_enqueue_style(
+			'sp-merge-select2-css',
+			'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css',
+			array(),
+			'4.1.0-rc.0'
+		);
+
+		wp_enqueue_script(
+			'sp-merge-select2-js',
+			'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js',
+			array( 'jquery' ),
+			'4.1.0-rc.0',
+			true
+		);
+
 		wp_enqueue_script(
 			'sp-merge-admin-js',
 			SP_MERGE_PLUGIN_URL . 'assets/js/admin.js',
-			array( 'jquery' ),
+			array( 'jquery', 'sp-merge-select2-js' ),
 			SP_MERGE_VERSION,
 			true
 		);
@@ -74,7 +90,6 @@ class SP_Merge_Admin {
 			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'sportspress-player-merge' ) );
 		}
 
-		$players        = $this->get_all_players();
 		$recent_backups = $this->get_recent_backups();
 
 		$template_path = SP_MERGE_PLUGIN_PATH . 'includes/admin-page.php';

@@ -95,11 +95,63 @@ class SP_Merge_Preview {
 		// Event count row.
 		$html .= $this->render_event_count_row( $primary_id, $duplicate_ids );
 
+		// Same-event collision warning.
+		$html .= $this->render_collision_warning( $primary_id, $duplicate_ids );
+
 		$html .= '</tbody>';
 		$html .= '</table>';
 		$html .= '</div>';
 
 		return $html;
+	}
+
+	/**
+	 * Detect and warn about events where both primary and duplicate appear.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return string HTML warning row, or empty string.
+	 */
+	private function render_collision_warning( int $primary_id, array $duplicate_ids ): string {
+		global $wpdb;
+
+		// Find events where primary player appears.
+		$primary_events = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
+				(string) $primary_id
+			)
+		);
+
+		if ( empty( $primary_events ) ) {
+			return '';
+		}
+
+		$collision_count = 0;
+		foreach ( $duplicate_ids as $dup_id ) {
+			$dup_events = $wpdb->get_col(
+				$wpdb->prepare(
+					"SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
+					(string) $dup_id
+				)
+			);
+			$collision_count += count( array_intersect( $primary_events, $dup_events ) );
+		}
+
+		if ( 0 === $collision_count ) {
+			return '';
+		}
+
+		return '</tbody></table>'
+			. '<div class="sp-merge-warning" style="margin-top:12px;">'
+			. '<p><strong>' . esc_html__( 'Warning:', 'sportspress-player-merge' ) . '</strong> '
+			. sprintf(
+				/* translators: %d: number of shared events */
+				esc_html__( '%d event(s) contain both the primary and duplicate player(s). Performance stats in those events will be combined (numeric values summed). Timeline entries will be merged. Please verify the result after merging.', 'sportspress-player-merge' ),
+				$collision_count
+			)
+			. '</p></div>'
+			. '<table class="merge-preview-table" style="display:none;"><tbody>';
 	}
 
 	/**

@@ -77,8 +77,51 @@
 		},
 
 		init: function() {
+			this.initSelect2();
 			this.bindEvents();
 			this.checkForExistingBackup();
+		},
+
+		/**
+		 * Initialize Select2 AJAX-powered player search on both selects.
+		 */
+		initSelect2: function() {
+			var ajaxConfig = {
+				url: spMergeAjax.ajaxUrl,
+				dataType: 'json',
+				delay: 300,
+				data: function( params ) {
+					return {
+						action: 'sp_search_players',
+						nonce: spMergeAjax.nonce,
+						search: params.term || ''
+					};
+				},
+				processResults: function( response ) {
+					if ( response.success && response.data && response.data.results ) {
+						return { results: response.data.results };
+					}
+					return { results: [] };
+				},
+				cache: true
+			};
+
+			$( '#primary-player' ).select2( {
+				ajax: ajaxConfig,
+				placeholder: $( '#primary-player' ).data( 'placeholder' ),
+				allowClear: true,
+				minimumInputLength: 0,
+				width: '100%'
+			} );
+
+			$( '#duplicate-players' ).select2( {
+				ajax: ajaxConfig,
+				placeholder: $( '#duplicate-players' ).data( 'placeholder' ),
+				allowClear: true,
+				minimumInputLength: 0,
+				maximumSelectionLength: 10,
+				width: '100%'
+			} );
 		},
 
 		bindEvents: function() {
@@ -93,27 +136,6 @@
 			$( document ).on( 'change', '.backup-checkbox', this.updateDeleteButtonState.bind( this ) );
 			$( '#primary-player, #duplicate-players' ).on( 'change', this.validateForm.bind( this ) );
 			$( document ).on( 'click', '.sp-expand-toggle', this.handleExpandToggle.bind( this ) );
-
-			// Multiselect UX enhancement.
-			var $multiselect = $( '#duplicate-players' );
-			$multiselect.on( 'focus', function() {
-				$( this ).closest( '.sp-form-group' ).addClass( 'focused' );
-			} );
-			$multiselect.on( 'blur', function() {
-				$( this ).closest( '.sp-form-group' ).removeClass( 'focused' );
-			} );
-			$multiselect.on( 'change', function() {
-				var count = $( this ).val() ? $( this ).val().length : 0;
-				var $help = $( this ).siblings( '.sp-form-help' );
-				var text = count > 0
-					? count + ' player(s) selected for merging.'
-					: 'Hold Ctrl (or Cmd on Mac) to select multiple players';
-				$help.empty().append(
-					$( '<span class="dashicons dashicons-info"></span>' ),
-					' ',
-					document.createTextNode( text )
-				);
-			} );
 		},
 
 		/**

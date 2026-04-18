@@ -40,7 +40,14 @@ class SP_Merge_Processor {
 	);
 
 	/**
-	 * Execute a full merge operation with transaction safety.
+	 * Transient key used for merge locking.
+	 *
+	 * @var string
+	 */
+	private const LOCK_KEY = 'sp_merge_lock';
+
+	/**
+	 * Execute a full merge operation with transaction safety and locking.
 	 *
 	 * @param int   $primary_id    The player ID to keep.
 	 * @param int[] $duplicate_ids Player IDs to merge and delete.
@@ -48,6 +55,14 @@ class SP_Merge_Processor {
 	 */
 	public function execute_merge( int $primary_id, array $duplicate_ids ): array {
 		global $wpdb;
+
+		// Acquire merge lock.
+		if ( ! $this->acquire_lock() ) {
+			return array(
+				'success' => false,
+				'message' => __( 'Another merge is in progress. Please wait and try again.', 'sportspress-player-merge' ),
+			);
+		}
 
 		$backup    = new SP_Merge_Backup();
 		$backup_id = null;
@@ -105,7 +120,38 @@ class SP_Merge_Processor {
 				'success' => false,
 				'message' => __( 'Merge failed. Please check the error log for details.', 'sportspress-player-merge' ),
 			);
+		} finally {
+			$this->release_lock();
 		}
+	}
+
+	/**
+	 * Acquire an atomic merge lock.
+	 *
+	 * @return bool True if lock acquired.
+	 */
+	private function acquire_lock(): bool {
+		// wp_cache_add is atomic — returns false if key already exists.
+		if ( wp_using_ext_object_cache() ) {
+			$acquired = wp_cache_add( self::LOCK_KEY, get_current_user_id(), 'sp_merge', 300 );
+			if ( ! $acquired ) {
+				return false;
+			}
+		}
+		// Also set transient as persistent fallback / for non-object-cache environments.
+		if ( get_transient( self::LOCK_KEY ) ) {
+			return false;
+		}
+		set_transient( self::LOCK_KEY, get_current_user_id(), 300 );
+		return true;
+	}
+
+	/**
+	 * Release the merge lock.
+	 */
+	private function release_lock(): void {
+		delete_transient( self::LOCK_KEY );
+		wp_cache_delete( self::LOCK_KEY, 'sp_merge' );
 	}
 
 	/**
@@ -119,6 +165,7 @@ class SP_Merge_Processor {
 		$this->merge_taxonomies( $primary_id, $duplicate_id );
 		$this->merge_meta_data( $primary_id, $duplicate_id );
 		$this->update_event_references( $primary_id, $duplicate_id );
+		$this->update_player_list_references( $primary_id, $duplicate_id );
 	}
 
 	/**
@@ -156,10 +203,7 @@ class SP_Merge_Processor {
 	private function merge_meta_data( int $primary_id, int $duplicate_id ): void {
 		$duplicate_meta = get_post_meta( $duplicate_id );
 
-		// Fields to skip — preserve primary player's display settings.
-		$skip_fields = array( 'sp_columns', 'sp_number' );
-
-		// Serialized array fields that need intelligent merging.
+		$skip_fields        = array( 'sp_columns', 'sp_number' );
 		$array_merge_fields = array( 'sp_statistics', 'sp_leagues', 'sp_assignments', 'sp_metrics' );
 
 		foreach ( $duplicate_meta as $key => $values ) {
@@ -176,7 +220,6 @@ class SP_Merge_Processor {
 				continue;
 			}
 
-			// Multi-value fields: add unique values only.
 			$existing = get_post_meta( $primary_id, $key );
 			foreach ( $values as $value ) {
 				if ( ! in_array( $value, $existing, true ) ) {
@@ -208,14 +251,14 @@ class SP_Merge_Processor {
 			return;
 		}
 
-		// Deep merge: add keys from duplicate that don't exist in primary.
 		$merged = $this->deep_merge_arrays( $primary_value, $duplicate_value );
 		update_post_meta( $primary_id, $key, $merged );
 	}
 
 	/**
-	 * Deep merge two associative arrays. Primary values take precedence for scalar values.
-	 * For nested arrays, recurse. For keys only in duplicate, add them.
+	 * Deep merge two arrays. Primary values take precedence for scalar values.
+	 * Numerically-indexed arrays are appended (array_merge) to preserve all entries.
+	 * Associative arrays are recursed.
 	 *
 	 * @param array $primary   Primary array.
 	 * @param array $duplicate Duplicate array.
@@ -226,11 +269,29 @@ class SP_Merge_Processor {
 			if ( ! isset( $primary[ $key ] ) ) {
 				$primary[ $key ] = $value;
 			} elseif ( is_array( $value ) && is_array( $primary[ $key ] ) ) {
-				$primary[ $key ] = $this->deep_merge_arrays( $primary[ $key ], $value );
+				// Numerically-indexed arrays (e.g., timeline minutes): append all values.
+				if ( $this->is_numeric_indexed( $value ) && $this->is_numeric_indexed( $primary[ $key ] ) ) {
+					$primary[ $key ] = array_values( array_unique( array_merge( $primary[ $key ], $value ) ) );
+				} else {
+					$primary[ $key ] = $this->deep_merge_arrays( $primary[ $key ], $value );
+				}
 			}
-			// If both have scalar values for the same key, primary wins.
+			// Scalar conflict: primary wins.
 		}
 		return $primary;
+	}
+
+	/**
+	 * Check if an array is numerically indexed (sequential 0-based keys).
+	 *
+	 * @param array $arr Array to check.
+	 * @return bool
+	 */
+	private function is_numeric_indexed( array $arr ): bool {
+		if ( empty( $arr ) ) {
+			return true;
+		}
+		return array_keys( $arr ) === range( 0, count( $arr ) - 1 );
 	}
 
 	/**
@@ -261,7 +322,6 @@ class SP_Merge_Processor {
 
 	/**
 	 * Update all event references from duplicate to primary player.
-	 * Uses structure-aware handling for serialized data.
 	 *
 	 * @param int $primary_id   Primary player ID.
 	 * @param int $duplicate_id Duplicate player ID.
@@ -270,7 +330,7 @@ class SP_Merge_Processor {
 	private function update_event_references( int $primary_id, int $duplicate_id ): void {
 		global $wpdb;
 
-		// 1. Simple meta: individual rows with exact player ID values.
+		// Simple meta: exact-match update.
 		foreach ( self::SIMPLE_PLAYER_META_KEYS as $meta_key ) {
 			$wpdb->update(
 				$wpdb->postmeta,
@@ -284,12 +344,13 @@ class SP_Merge_Processor {
 			);
 		}
 
-		// 2. Serialized meta: unserialize, replace keys/values, re-serialize.
+		// Serialized meta: structure-aware replacement.
 		$this->update_serialized_event_meta( $primary_id, $duplicate_id );
 	}
 
 	/**
 	 * Update serialized event meta that contains player IDs as array keys.
+	 * Uses additive merging for same-event collisions (sums numeric stats).
 	 *
 	 * @param int $primary_id   Primary player ID.
 	 * @param int $duplicate_id Duplicate player ID.
@@ -297,7 +358,6 @@ class SP_Merge_Processor {
 	private function update_serialized_event_meta( int $primary_id, int $duplicate_id ): void {
 		global $wpdb;
 
-		// Find all events that reference this duplicate player.
 		$event_ids = $wpdb->get_col(
 			$wpdb->prepare(
 				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
@@ -310,49 +370,52 @@ class SP_Merge_Processor {
 			return;
 		}
 
+		// Pre-warm meta cache for all affected events.
+		update_postmeta_cache( array_map( 'intval', $event_ids ) );
+
 		foreach ( $event_ids as $event_id ) {
+			$event_id = (int) $event_id;
+
 			foreach ( self::SERIALIZED_PLAYER_META_KEYS as $meta_key ) {
-				$raw = get_post_meta( (int) $event_id, $meta_key, true );
+				$raw = get_post_meta( $event_id, $meta_key, true );
 				if ( empty( $raw ) || ! is_array( $raw ) ) {
 					continue;
 				}
 
-				$updated = $this->replace_player_id_in_structure( $raw, $primary_id, $duplicate_id );
+				$updated = $this->replace_player_id_in_structure( $raw, $primary_id, $duplicate_id, $meta_key );
 				if ( $updated !== $raw ) {
-					update_post_meta( (int) $event_id, $meta_key, $updated );
+					update_post_meta( $event_id, $meta_key, $updated );
 				}
 			}
 		}
 	}
 
 	/**
-	 * Recursively replace a player ID used as an array key in a nested structure.
+	 * Recursively replace a player ID in a nested structure.
+	 * For sp_players: sums numeric performance values on collision.
+	 * For sp_timeline: appends minute arrays on collision.
 	 *
-	 * SportsPress structures like sp_players and sp_timeline use:
-	 *   array( team_id => array( player_id => data ) )
-	 *
-	 * This walks the structure and re-keys entries from duplicate_id to primary_id.
-	 *
-	 * @param array $data         The data structure.
-	 * @param int   $primary_id   Primary player ID.
-	 * @param int   $duplicate_id Duplicate player ID.
+	 * @param array  $data         The data structure.
+	 * @param int    $primary_id   Primary player ID.
+	 * @param int    $duplicate_id Duplicate player ID.
+	 * @param string $meta_key     The meta key context for merge strategy.
 	 * @return array Modified structure.
 	 */
-	private function replace_player_id_in_structure( array $data, int $primary_id, int $duplicate_id ): array {
+	private function replace_player_id_in_structure( array $data, int $primary_id, int $duplicate_id, string $meta_key = '' ): array {
 		$result = array();
 
 		foreach ( $data as $key => $value ) {
 			$new_key = ( (int) $key === $duplicate_id ) ? $primary_id : $key;
 
 			if ( is_array( $value ) ) {
-				$new_value = $this->replace_player_id_in_structure( $value, $primary_id, $duplicate_id );
+				$new_value = $this->replace_player_id_in_structure( $value, $primary_id, $duplicate_id, $meta_key );
 			} else {
 				$new_value = ( (int) $value === $duplicate_id ) ? (string) $primary_id : $value;
 			}
 
-			// If primary already exists at this key, merge rather than overwrite.
+			// Handle collision: both primary and duplicate exist under the same parent key.
 			if ( isset( $result[ $new_key ] ) && is_array( $result[ $new_key ] ) && is_array( $new_value ) ) {
-				$result[ $new_key ] = $this->deep_merge_arrays( $result[ $new_key ], $new_value );
+				$result[ $new_key ] = $this->merge_collision( $result[ $new_key ], $new_value, $meta_key );
 			} else {
 				$result[ $new_key ] = $new_value;
 			}
@@ -362,24 +425,158 @@ class SP_Merge_Processor {
 	}
 
 	/**
+	 * Merge two player entries that collide (same event, same team).
+	 * For sp_players: sums numeric stat values, keeps primary's status/sub/position.
+	 * For sp_timeline: appends minute arrays.
+	 * For sp_order/sp_stars: keeps primary's values.
+	 *
+	 * @param array  $primary  Primary player's data.
+	 * @param array  $incoming Duplicate player's data.
+	 * @param string $meta_key Meta key context.
+	 * @return array Merged data.
+	 */
+	private function merge_collision( array $primary, array $incoming, string $meta_key ): array {
+		if ( 'sp_players' === $meta_key ) {
+			return $this->merge_player_performance( $primary, $incoming );
+		}
+
+		if ( 'sp_timeline' === $meta_key ) {
+			return $this->merge_timeline_data( $primary, $incoming );
+		}
+
+		// For sp_order, sp_stars: primary wins.
+		return $primary;
+	}
+
+	/**
+	 * Merge two player performance entries from the same event.
+	 * Sums numeric stat values. Keeps primary's status, sub, position, number.
+	 *
+	 * @param array $primary  Primary performance data.
+	 * @param array $incoming Duplicate performance data.
+	 * @return array Merged performance.
+	 */
+	private function merge_player_performance( array $primary, array $incoming ): array {
+		$non_numeric_keys = array( 'status', 'sub', 'number', 'position' );
+
+		foreach ( $incoming as $stat_key => $stat_value ) {
+			if ( in_array( $stat_key, $non_numeric_keys, true ) ) {
+				// Keep primary's value for non-numeric fields.
+				if ( ! isset( $primary[ $stat_key ] ) || '' === $primary[ $stat_key ] ) {
+					$primary[ $stat_key ] = $stat_value;
+				}
+				continue;
+			}
+
+			if ( ! isset( $primary[ $stat_key ] ) || '' === $primary[ $stat_key ] ) {
+				$primary[ $stat_key ] = $stat_value;
+			} elseif ( is_numeric( $primary[ $stat_key ] ) && is_numeric( $stat_value ) ) {
+				// Sum numeric stats (goals, assists, etc.).
+				$primary[ $stat_key ] = (string) ( (float) $primary[ $stat_key ] + (float) $stat_value );
+			}
+		}
+
+		return $primary;
+	}
+
+	/**
+	 * Merge two timeline entries from the same event.
+	 * Appends minute arrays for each performance key.
+	 *
+	 * @param array $primary  Primary timeline data.
+	 * @param array $incoming Duplicate timeline data.
+	 * @return array Merged timeline.
+	 */
+	private function merge_timeline_data( array $primary, array $incoming ): array {
+		foreach ( $incoming as $perf_key => $minutes ) {
+			if ( ! isset( $primary[ $perf_key ] ) ) {
+				$primary[ $perf_key ] = $minutes;
+			} elseif ( is_array( $primary[ $perf_key ] ) && is_array( $minutes ) ) {
+				// Append all minutes and sort.
+				$merged = array_merge( $primary[ $perf_key ], $minutes );
+				sort( $merged, SORT_NUMERIC );
+				$primary[ $perf_key ] = array_values( array_unique( $merged ) );
+			}
+		}
+
+		return $primary;
+	}
+
+	/**
+	 * Update sp_list posts that reference the duplicate player.
+	 *
+	 * @param int $primary_id   Primary player ID.
+	 * @param int $duplicate_id Duplicate player ID.
+	 */
+	private function update_player_list_references( int $primary_id, int $duplicate_id ): void {
+		global $wpdb;
+
+		$dup_str = (string) $duplicate_id;
+
+		// Find sp_list posts referencing the duplicate via sp_player simple meta
+		// OR via serialized sp_players meta (LIKE search as fallback).
+		$list_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+				WHERE p.post_type = 'sp_list'
+				AND (
+					(pm.meta_key = 'sp_player' AND pm.meta_value = %s)
+					OR (pm.meta_key = 'sp_players' AND pm.meta_value LIKE %s)
+				)",
+				$dup_str,
+				'%' . $wpdb->esc_like( $dup_str ) . '%'
+			)
+		);
+
+		if ( empty( $list_ids ) ) {
+			return;
+		}
+
+		foreach ( $list_ids as $list_id ) {
+			$list_id = (int) $list_id;
+
+			// Update simple sp_player meta rows.
+			$wpdb->update(
+				$wpdb->postmeta,
+				array( 'meta_value' => (string) $primary_id ),
+				array(
+					'post_id'    => $list_id,
+					'meta_key'   => 'sp_player',
+					'meta_value' => (string) $duplicate_id,
+				),
+				array( '%s' ),
+				array( '%d', '%s', '%s' )
+			);
+
+			// Update serialized sp_players meta if present.
+			$players_data = get_post_meta( $list_id, 'sp_players', true );
+			if ( is_array( $players_data ) ) {
+				$updated = $this->replace_player_id_in_structure( $players_data, $primary_id, $duplicate_id, 'sp_list' );
+				if ( $updated !== $players_data ) {
+					update_post_meta( $list_id, 'sp_players', $updated );
+				}
+			}
+
+			clean_post_cache( $list_id );
+		}
+	}
+
+	/**
 	 * Clear SportsPress caches after merge so stats recalculate.
 	 *
 	 * @param int   $primary_id    Primary player ID.
 	 * @param int[] $duplicate_ids Duplicate player IDs.
 	 */
 	private function clear_sportspress_caches( int $primary_id, array $duplicate_ids ): void {
-		// Clear post and meta caches for primary player.
 		clean_post_cache( $primary_id );
 
-		// Fire SportsPress recalculation hooks.
 		if ( function_exists( 'sp_delete_player_data' ) ) {
 			sp_delete_player_data( $primary_id );
 		}
 
-		// Clear transients that SportsPress may have cached.
 		delete_transient( 'sp_player_data_' . $primary_id );
 
-		// Find affected events and clear their caches too.
 		global $wpdb;
 		$event_ids = $wpdb->get_col(
 			$wpdb->prepare(

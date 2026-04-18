@@ -201,6 +201,12 @@ class SP_Merge_Ajax {
 			return false;
 		}
 
+		// Limit number of duplicates per merge.
+		if ( count( $duplicate_ids ) > 10 ) {
+			$this->send_error( __( 'Maximum 10 duplicate players per merge operation.', 'sportspress-player-merge' ) );
+			return false;
+		}
+
 		// Prevent merging a player into itself.
 		if ( in_array( $primary_id, $duplicate_ids, true ) ) {
 			$this->send_error( __( 'Primary player cannot also be a duplicate', 'sportspress-player-merge' ) );
@@ -208,15 +214,15 @@ class SP_Merge_Ajax {
 		}
 
 		$primary_post = get_post( $primary_id );
-		if ( ! $primary_post || 'sp_player' !== $primary_post->post_type ) {
-			$this->send_error( __( 'Primary player not found', 'sportspress-player-merge' ) );
+		if ( ! $primary_post || 'sp_player' !== $primary_post->post_type || 'publish' !== $primary_post->post_status ) {
+			$this->send_error( __( 'Primary player not found or not published', 'sportspress-player-merge' ) );
 			return false;
 		}
 
 		foreach ( $duplicate_ids as $dup_id ) {
 			$dup_post = get_post( $dup_id );
-			if ( ! $dup_post || 'sp_player' !== $dup_post->post_type ) {
-				$this->send_error( __( 'One or more duplicate players not found', 'sportspress-player-merge' ) );
+			if ( ! $dup_post || 'sp_player' !== $dup_post->post_type || 'publish' !== $dup_post->post_status ) {
+				$this->send_error( __( 'One or more duplicate players not found or not published', 'sportspress-player-merge' ) );
 				return false;
 			}
 		}
@@ -284,6 +290,54 @@ class SP_Merge_Ajax {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Handle AJAX player search for Select2.
+	 */
+	public function search_players(): void {
+		if ( ! $this->validate_request() ) {
+			return;
+		}
+
+		$search = isset( $_POST['search'] ) ? sanitize_text_field( wp_unslash( $_POST['search'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+
+		$args = array(
+			'post_type'      => 'sp_player',
+			'posts_per_page' => 20,
+			'no_found_rows'  => true,
+			'post_status'    => 'publish',
+			'orderby'        => 'title',
+			'order'          => 'ASC',
+		);
+
+		if ( ! empty( $search ) ) {
+			$args['s'] = $search;
+		}
+
+		$players = get_posts( $args );
+		$results = array();
+
+		foreach ( $players as $player ) {
+			$team = '';
+			$team_ids = get_post_meta( $player->ID, 'sp_current_team' );
+			foreach ( array_reverse( $team_ids ) as $tid ) {
+				if ( $tid && '0' !== $tid ) {
+					$t = get_post( (int) $tid );
+					if ( $t && 'sp_team' === $t->post_type ) {
+						$team = $t->post_title;
+						break;
+					}
+				}
+			}
+
+			$results[] = array(
+				'id'   => $player->ID,
+				'text' => $player->post_title . ' (ID: ' . $player->ID . ')' . ( $team ? ' - ' . $team : '' ),
+			);
+		}
+
+		wp_send_json_success( array( 'results' => $results ) );
 	}
 
 	/**

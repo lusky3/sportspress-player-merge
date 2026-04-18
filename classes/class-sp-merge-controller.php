@@ -53,5 +53,6 @@ class SP_Merge_Controller {
 		add_action( 'wp_ajax_sp_revert_merge', array( $this->ajax, 'revert_merge' ) );
 		add_action( 'wp_ajax_sp_delete_backup', array( $this->ajax, 'delete_backup' ) );
 		add_action( 'wp_ajax_sp_get_recent_backups', array( $this->ajax, 'get_recent_backups' ) );
+		add_action( 'wp_ajax_sp_search_players', array( $this->ajax, 'search_players' ) );
 	}
 }
