@@ -104,10 +104,11 @@ class SP_Merge_Backup {
 		}
 
 		$placeholders = implode( ',', array_fill( 0, count( $backup_ids ), '%s' ) );
+		$query_args   = array_merge( $backup_ids, array( get_current_user_id() ) );
 		$result       = $wpdb->query(
 			$wpdb->prepare(
-				"DELETE FROM {$table_name} WHERE backup_id IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				$backup_ids
+				"DELETE FROM {$table_name} WHERE backup_id IN ({$placeholders}) AND user_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$query_args
 			)
 		);
 
@@ -206,11 +207,14 @@ class SP_Merge_Backup {
 		}
 
 		$placeholders = implode( ',', array_fill( 0, count( $duplicate_ids ), '%s' ) );
-		$event_ids    = $wpdb->get_col(
+		$str_ids      = array_map( 'strval', $duplicate_ids );
+
+		// Find events referencing any duplicate player.
+		$event_ids = $wpdb->get_col(
 			$wpdb->prepare(
 				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
 				WHERE meta_key = 'sp_player' AND meta_value IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				array_map( 'strval', $duplicate_ids )
+				$str_ids
 			)
 		);
 
@@ -219,18 +223,43 @@ class SP_Merge_Backup {
 		}
 
 		$serialized_keys = array( 'sp_players', 'sp_timeline', 'sp_order', 'sp_stars' );
+		$simple_keys     = array( 'sp_player', 'sp_offense', 'sp_defense' );
 		$affected        = array();
 
 		foreach ( $event_ids as $event_id ) {
 			$event_id = (int) $event_id;
+			$event_data = array();
+
+			// Backup serialized meta.
 			foreach ( $serialized_keys as $meta_key ) {
 				$value = get_post_meta( $event_id, $meta_key, true );
 				if ( ! empty( $value ) ) {
-					if ( ! isset( $affected[ $event_id ] ) ) {
-						$affected[ $event_id ] = array();
-					}
-					$affected[ $event_id ][ $meta_key ] = $value;
+					$event_data[ $meta_key ] = $value;
 				}
+			}
+
+			// Backup simple meta rows that reference duplicate players.
+			foreach ( $simple_keys as $meta_key ) {
+				$rows = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT meta_id, meta_value FROM {$wpdb->postmeta}
+						WHERE post_id = %d AND meta_key = %s AND meta_value IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+						array_merge( array( $event_id, $meta_key ), $str_ids )
+					)
+				);
+				if ( ! empty( $rows ) ) {
+					$event_data[ '_simple_' . $meta_key ] = array();
+					foreach ( $rows as $row ) {
+						$event_data[ '_simple_' . $meta_key ][] = array(
+							'meta_id'    => (int) $row->meta_id,
+							'meta_value' => $row->meta_value,
+						);
+					}
+				}
+			}
+
+			if ( ! empty( $event_data ) ) {
+				$affected[ $event_id ] = $event_data;
 			}
 		}
 
@@ -285,8 +314,9 @@ class SP_Merge_Backup {
 
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT backup_data FROM {$wpdb->prefix}sp_merge_backups WHERE backup_id = %s",
-				$backup_id
+				"SELECT backup_data FROM {$wpdb->prefix}sp_merge_backups WHERE backup_id = %s AND user_id = %d",
+				$backup_id,
+				get_current_user_id()
 			)
 		);
 
@@ -300,52 +330,56 @@ class SP_Merge_Backup {
 	 * @throws Exception On failure.
 	 */
 	private function execute_revert( array $backup_data ): void {
+		global $wpdb;
+
 		// 1. Restore affected event meta to original values.
 		if ( ! empty( $backup_data['affected_events'] ) ) {
 			foreach ( $backup_data['affected_events'] as $event_id => $meta_entries ) {
+				$event_id = (int) $event_id;
 				foreach ( $meta_entries as $meta_key => $original_value ) {
-					update_post_meta( (int) $event_id, $meta_key, $original_value );
+					if ( 0 === strpos( $meta_key, '_simple_' ) ) {
+						// Restore simple meta rows by meta_id.
+						foreach ( $original_value as $row ) {
+							$wpdb->update(
+								$wpdb->postmeta,
+								array( 'meta_value' => $row['meta_value'] ),
+								array( 'meta_id' => (int) $row['meta_id'] ),
+								array( '%s' ),
+								array( '%d' )
+							);
+						}
+					} else {
+						update_post_meta( $event_id, $meta_key, $original_value );
+					}
 				}
+				clean_post_cache( $event_id );
+				delete_transient( 'sp_event_data_' . $event_id );
 			}
 		}
 
-		// 2. Restore simple event references (sp_player, sp_offense, sp_defense).
-		$primary_id = (int) $backup_data['primary_id'];
-		foreach ( $backup_data['duplicate_backups'] as $duplicate_id => $duplicate_backup ) {
-			$this->restore_simple_event_references( $primary_id, (int) $duplicate_id );
-		}
+		// 2. Recreate deleted duplicate players.
+		$primary_id    = (int) $backup_data['primary_id'];
+		$recreated_ids = array();
 
-		// 3. Recreate deleted duplicate players.
 		foreach ( $backup_data['duplicate_backups'] as $duplicate_id => $duplicate_backup ) {
 			if ( isset( $duplicate_backup['post_data'] ) ) {
 				$this->recreate_player( (int) $duplicate_id, $duplicate_backup );
+				$recreated_ids[] = (int) $duplicate_id;
 			}
 		}
 
-		// 4. Restore primary player to original state.
+		// 3. Restore primary player to original state.
 		$this->restore_player_data( $primary_id, $backup_data['primary_backup'] );
 
-		// 5. Clear caches.
-		clean_post_cache( $primary_id );
-	}
-
-	/**
-	 * Restore simple meta references that were changed from duplicate to primary.
-	 *
-	 * We can't blindly replace primary→duplicate because the primary may have had
-	 * legitimate references before the merge. Instead, we rely on the event meta
-	 * backup for serialized data and only handle simple meta here.
-	 *
-	 * @param int $primary_id   Primary player ID.
-	 * @param int $duplicate_id Duplicate player ID.
-	 */
-	private function restore_simple_event_references( int $primary_id, int $duplicate_id ): void {
-		// Simple meta keys are restored via the affected_events backup for serialized data.
-		// For sp_player rows, we need to add back the duplicate's rows.
-		// The processor changed duplicate→primary, so we need to change some back.
-		// However, we can't distinguish which sp_player rows were originally the duplicate's
-		// vs the primary's. The affected_events backup handles serialized meta.
-		// For simple meta, the recreate_player + restore_player_data handles the rest.
+		// 4. Clear SportsPress caches for all affected players.
+		$all_player_ids = array_merge( array( $primary_id ), $recreated_ids );
+		foreach ( $all_player_ids as $pid ) {
+			clean_post_cache( $pid );
+			delete_transient( 'sp_player_data_' . $pid );
+			if ( function_exists( 'sp_delete_player_data' ) ) {
+				sp_delete_player_data( $pid );
+			}
+		}
 	}
 
 	/**
@@ -355,7 +389,7 @@ class SP_Merge_Backup {
 	 * @param array $backup_data Player backup data.
 	 * @return int|false Player ID or false.
 	 */
-	private function recreate_player( int $original_id, array $backup_data ) {
+	private function recreate_player( int $original_id, array $backup_data ): int|false {
 		$existing = get_post( $original_id );
 		if ( $existing && 'sp_player' === $existing->post_type ) {
 			$this->restore_player_data( $original_id, $backup_data );
@@ -425,6 +459,9 @@ class SP_Merge_Backup {
 				if ( is_array( $values ) ) {
 					foreach ( $values as $value ) {
 						$restored = maybe_unserialize( $value );
+						if ( is_object( $restored ) ) {
+							continue; // Skip unexpected objects for safety.
+						}
 						add_post_meta( $player_id, $key, $restored );
 					}
 				}
@@ -453,8 +490,11 @@ class SP_Merge_Backup {
 
 		$wpdb->delete(
 			$wpdb->prefix . 'sp_merge_backups',
-			array( 'backup_id' => $backup_id ),
-			array( '%s' )
+			array(
+				'backup_id' => $backup_id,
+				'user_id'   => get_current_user_id(),
+			),
+			array( '%s', '%d' )
 		);
 
 		$last = get_user_meta( get_current_user_id(), 'sp_last_merge_backup', true );

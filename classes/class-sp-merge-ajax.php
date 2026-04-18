@@ -42,7 +42,7 @@ class SP_Merge_Ajax {
 	 * Handle execute merge request.
 	 */
 	public function execute_merge(): void {
-		if ( ! $this->validate_request() ) {
+		if ( ! $this->validate_write_request() ) {
 			return;
 		}
 
@@ -74,7 +74,7 @@ class SP_Merge_Ajax {
 	 * Handle revert merge request.
 	 */
 	public function revert_merge(): void {
-		if ( ! $this->validate_request() ) {
+		if ( ! $this->validate_write_request() ) {
 			return;
 		}
 
@@ -101,7 +101,7 @@ class SP_Merge_Ajax {
 	 * Handle delete backup request.
 	 */
 	public function delete_backup(): void {
-		if ( ! $this->validate_request() ) {
+		if ( ! $this->validate_write_request() ) {
 			return;
 		}
 
@@ -184,7 +184,7 @@ class SP_Merge_Ajax {
 	 *
 	 * @return array{primary_id: int, duplicate_ids: int[]}|false
 	 */
-	private function validate_merge_input() {
+	private function validate_merge_input(): array|false {
 		$primary_id = isset( $_POST['primary_player'] ) ? absint( wp_unslash( $_POST['primary_player'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 
 		$raw_duplicates = isset( $_POST['duplicate_players'] ) ? wp_unslash( $_POST['duplicate_players'] ) : null; // phpcs:ignore WordPress.Security.NonceVerification.Missing
@@ -193,11 +193,17 @@ class SP_Merge_Ajax {
 			return false;
 		}
 
-		$duplicate_ids = array_map( 'absint', $raw_duplicates );
-		$duplicate_ids = array_filter( $duplicate_ids );
+		$duplicate_ids = array_unique( array_map( 'absint', $raw_duplicates ) );
+		$duplicate_ids = array_values( array_filter( $duplicate_ids ) );
 
 		if ( ! $primary_id || empty( $duplicate_ids ) ) {
 			$this->send_error( __( 'Invalid player selection', 'sportspress-player-merge' ) );
+			return false;
+		}
+
+		// Prevent merging a player into itself.
+		if ( in_array( $primary_id, $duplicate_ids, true ) ) {
+			$this->send_error( __( 'Primary player cannot also be a duplicate', 'sportspress-player-merge' ) );
 			return false;
 		}
 
@@ -226,7 +232,7 @@ class SP_Merge_Ajax {
 	 *
 	 * @return string|false
 	 */
-	private function get_backup_id() {
+	private function get_backup_id(): string|false {
 		$backup_id = isset( $_POST['backup_id'] ) ? sanitize_text_field( wp_unslash( $_POST['backup_id'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 
 		if ( empty( $backup_id ) ) {
@@ -242,12 +248,31 @@ class SP_Merge_Ajax {
 	}
 
 	/**
-	 * Validate nonce and capabilities.
+	 * Validate nonce and read-level capabilities.
 	 *
 	 * @return bool
 	 */
 	private function validate_request(): bool {
-		if ( ! current_user_can( 'edit_sp_players' ) ) {
+		return $this->check_request( 'edit_sp_players' );
+	}
+
+	/**
+	 * Validate nonce and write-level capabilities (delete/revert).
+	 *
+	 * @return bool
+	 */
+	private function validate_write_request(): bool {
+		return $this->check_request( 'delete_sp_players' );
+	}
+
+	/**
+	 * Check nonce and a specific capability.
+	 *
+	 * @param string $capability Required capability.
+	 * @return bool
+	 */
+	private function check_request( string $capability ): bool {
+		if ( ! current_user_can( $capability ) ) {
 			$this->send_error( __( 'Insufficient permissions', 'sportspress-player-merge' ) );
 			return false;
 		}

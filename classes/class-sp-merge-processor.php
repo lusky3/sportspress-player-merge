@@ -97,9 +97,13 @@ class SP_Merge_Processor {
 				$backup->delete_backup( $backup_id );
 			}
 
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+				error_log( 'SP Merge error: ' . $e->getMessage() );
+			}
+
 			return array(
 				'success' => false,
-				'message' => __( 'Merge failed', 'sportspress-player-merge' ) . ': ' . $e->getMessage(),
+				'message' => __( 'Merge failed. Please check the error log for details.', 'sportspress-player-merge' ),
 			);
 		}
 	}
@@ -235,7 +239,7 @@ class SP_Merge_Processor {
 	 * @param int $player_id Player ID.
 	 */
 	private function deduplicate_multi_value_meta( int $player_id ): void {
-		$fields = array( 'sp_team', 'sp_current_team', 'sp_past_team' );
+		$fields = array( 'sp_team', 'sp_current_team', 'sp_past_team', 'sp_nationality' );
 
 		foreach ( $fields as $field ) {
 			$values = get_post_meta( $player_id, $field );

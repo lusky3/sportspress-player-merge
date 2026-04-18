@@ -206,11 +206,12 @@ class SP_Merge_Preview {
 		);
 
 		$dup_count = 0;
-		foreach ( $duplicate_ids as $dup_id ) {
-			$dup_count += (int) $wpdb->get_var(
+		if ( ! empty( $duplicate_ids ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $duplicate_ids ), '%s' ) );
+			$dup_count    = (int) $wpdb->get_var(
 				$wpdb->prepare(
-					"SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
-					(string) $dup_id
+					"SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					array_map( 'strval', $duplicate_ids )
 				)
 			);
 		}

@@ -122,7 +122,7 @@ class SP_Merge_Admin {
 	 *
 	 * @return array[]|false Backups or false on error.
 	 */
-	public function get_recent_backups() {
+	public function get_recent_backups(): array|false {
 		global $wpdb;
 
 		$table_name = $wpdb->prefix . 'sp_merge_backups';
