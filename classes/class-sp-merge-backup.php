@@ -70,9 +70,13 @@ class SP_Merge_Backup {
 		} catch ( Exception $e ) {
 			$wpdb->query( 'ROLLBACK' );
 
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+				error_log( 'SP Merge revert error: ' . $e->getMessage() );
+			}
+
 			return array(
 				'success' => false,
-				'message' => __( 'Revert failed', 'sportspress-player-merge' ) . ': ' . $e->getMessage(),
+				'message' => __( 'Revert failed. Please check the error log for details.', 'sportspress-player-merge' ),
 			);
 		}
 	}
