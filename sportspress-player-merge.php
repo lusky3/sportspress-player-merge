@@ -115,9 +115,9 @@ class SportsPress_Player_Merge_Init {
 		}
 
 		if ( class_exists( 'SP_Merge_Controller' ) ) {
-			new SP_Merge_Controller();
+			$GLOBALS['sp_merge_controller'] = new SP_Merge_Controller();
 		}
 	}
 }
 
-new SportsPress_Player_Merge_Init();
+$GLOBALS['sp_merge'] = new SportsPress_Player_Merge_Init();

@@ -94,7 +94,7 @@ class SP_Merge_Admin {
 
 		$template_path = SP_MERGE_PLUGIN_PATH . 'includes/admin-page.php';
 		if ( file_exists( $template_path ) ) {
-			include $template_path;
+			include_once $template_path;
 		} else {
 			wp_die( esc_html__( 'Error: Admin page template not found.', 'sportspress-player-merge' ) );
 		}
