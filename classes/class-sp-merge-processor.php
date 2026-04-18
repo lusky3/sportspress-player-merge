@@ -1,296 +1,401 @@
 <?php
 /**
  * Merge Processor Class
- * 
- * Handles the core merge logic and data operations
+ *
+ * Handles the core merge logic and data operations.
+ *
+ * @package SportsPress_Player_Merge
  */
 
-if (!defined('ABSPATH')) {
-    wp_die('Direct access denied.', 'Access Denied', array('response' => 403));
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
+/**
+ * Class SP_Merge_Processor
+ */
 class SP_Merge_Processor {
-    
-    public function execute_merge($primary_id, $duplicate_ids) {
-        $backup = null;
-        $backup_id = null;
-        
-        try {
-            $backup = new SP_Merge_Backup();
-            $backup_id = $backup->create_merge_backup($primary_id, $duplicate_ids);
-            
-            if (!$backup_id) {
-                throw new Exception(__('Failed to create backup before merge', 'sportspress-player-merge'));
-            }
-            
-            foreach ($duplicate_ids as $duplicate_id) {
-                if (!$this->merge_single_player($primary_id, $duplicate_id)) {
-                    throw new Exception(__('Player merge operation failed', 'sportspress-player-merge'));
-                }
-            }
-            
-            foreach ($duplicate_ids as $duplicate_id) {
-                $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Attempting to delete player ID " . intval($duplicate_id));
-                
-                // Check if player exists before deletion
-                $player_before = get_post($duplicate_id);
-                if (!$player_before) {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Player " . intval($duplicate_id) . " does not exist, skipping deletion");
-                    continue;
-                }
-                
-                $deleted = wp_delete_post($duplicate_id, true);
-                error_log("SP Merge [User: " . intval($user_id) . "]: wp_delete_post returned: " . var_export($deleted, true));
-                
-                // Verify deletion
-                $player_after = get_post($duplicate_id);
-                if ($player_after && $player_after->post_status !== 'trash') {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Player " . intval($duplicate_id) . " still exists after deletion attempt");
-                    throw new Exception(__('Failed to delete duplicate player', 'sportspress-player-merge') . ': ' . $duplicate_id);
-                }
-                
-                error_log("SP Merge [User: " . intval($user_id) . "]: Successfully deleted player ID " . intval($duplicate_id));
-            }
-            
-            $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Completed merge of player " . intval($primary_id));
-            
-            return [
-                'success' => true,
-                'backup_id' => $backup_id
-            ];
-            
-        } catch (Exception $e) {
-            // Clean up backup if merge failed
-            if ($backup && $backup_id) {
-                $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Merge failed, cleaning up backup " . $backup_id);
-                $backup->delete_backup($backup_id);
-            }
-            
-            return [
-                'success' => false,
-                'message' => __('Merge failed', 'sportspress-player-merge') . ': ' . $e->getMessage()
-            ];
-        }
-    }
-    
-    private function merge_single_player($primary_id, $duplicate_id) {
-        try {
-            $this->merge_taxonomies($primary_id, $duplicate_id);
-            $this->merge_meta_data($primary_id, $duplicate_id);
-            $this->update_references($primary_id, $duplicate_id);
-            return true;
-        } catch (Exception $e) {
-            $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Single player merge failed - " . $e->getMessage());
-            return false;
-        }
-    }
-    
-    private function merge_taxonomies($primary_id, $duplicate_id) {
-        $taxonomies = ['sp_league', 'sp_season', 'sp_position'];
-        
-        foreach ($taxonomies as $taxonomy) {
-            // Check if taxonomy exists before attempting to use it
-            if (!taxonomy_exists($taxonomy)) {
-                continue;
-            }
-            
-            $primary_terms = wp_get_object_terms($primary_id, $taxonomy, ['fields' => 'ids']);
-            $duplicate_terms = wp_get_object_terms($duplicate_id, $taxonomy, ['fields' => 'ids']);
-            
-            if (is_wp_error($primary_terms) || is_wp_error($duplicate_terms)) {
-                $user_id = get_current_user_id();
-                error_log("SP Merge [User: " . intval($user_id) . "]: Error getting terms for taxonomy " . sanitize_key($taxonomy));
-                continue;
-            }
-            
-            $primary_terms = is_array($primary_terms) ? $primary_terms : [];
-            $duplicate_terms = is_array($duplicate_terms) ? $duplicate_terms : [];
-            
-            $merged_terms = array_unique(array_merge($primary_terms, $duplicate_terms));
-            
-            if (count($merged_terms) > count($primary_terms)) {
-                $result = wp_set_object_terms($primary_id, $merged_terms, $taxonomy);
-                if (is_wp_error($result)) {
-                    $user_id = get_current_user_id();
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Failed to set terms for taxonomy " . sanitize_key($taxonomy));
-                }
-            }
-        }
-    }
-    
-    private function merge_meta_data($primary_id, $duplicate_id) {
-        $duplicate_meta = get_post_meta($duplicate_id);
-        
-        // Fields that should have single values (replace, don't duplicate)
-        $single_value_fields = ['sp_leagues', 'sp_statistics', 'sp_metrics'];
-        
-        // Fields to skip during merge (preserve primary player's settings)
-        $skip_fields = ['sp_assignments', 'sp_columns', 'sp_leagues'];
-        
-        // Note: These fields control frontend stat display and must be preserved:
-        // - sp_columns: which stat columns to show (goals, assists, etc.)
-        // - sp_assignments: division-grouped stats display (creates league-season-team records)
-        // - sp_leagues: career totals display (-1 = hidden, other values = show)
-        // Preserving these maintains the merge rule: primary player's display settings are kept.
-        
-        foreach ($duplicate_meta as $key => $values) {
-            if (strpos($key, 'sp_') === 0 && !in_array($key, $skip_fields)) {
-                if (in_array($key, $single_value_fields)) {
-                    // For single-value fields, merge the data intelligently
-                    $this->merge_single_value_field($primary_id, $duplicate_id, $key);
-                } else {
-                    // For multi-value fields, add unique values only
-                    $existing_values = get_post_meta($primary_id, $key);
-                    foreach ($values as $value) {
-                        if (!in_array($value, $existing_values, true)) {
-                            if (!add_post_meta($primary_id, $key, $value)) {
-                                throw new Exception(__('Failed to add meta field', 'sportspress-player-merge') . ': ' . $key);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Clean up any duplicates that may have been created
-        $this->cleanup_duplicate_meta($primary_id);
-    }
-    
-    private function merge_single_value_field($primary_id, $duplicate_id, $key) {
-        $user_id = get_current_user_id();
-        $primary_value = get_post_meta($primary_id, $key, true);
-        $duplicate_value = get_post_meta($duplicate_id, $key, true);
-        
-        error_log("SP Merge [User: " . intval($user_id) . "]: Merging field '{$key}' - Primary empty: " . (empty($primary_value) ? 'yes' : 'no') . ", Duplicate empty: " . (empty($duplicate_value) ? 'yes' : 'no'));
-        
-        if (empty($primary_value) && !empty($duplicate_value)) {
-            // Primary is empty, use duplicate value
-            error_log("SP Merge [User: " . intval($user_id) . "]: Using duplicate value for '{$key}'");
-            if (!update_post_meta($primary_id, $key, $duplicate_value)) {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Failed to update meta field '{$key}' with duplicate value");
-                throw new Exception(__('Failed to update meta field', 'sportspress-player-merge') . ': ' . $key);
-            }
-        } elseif (!empty($primary_value) && !empty($duplicate_value)) {
-            // Both have values, merge them intelligently
-            if ($key === 'sp_leagues' || $key === 'sp_statistics') {
-                error_log("SP Merge [User: " . intval($user_id) . "]: Merging array data for '{$key}'");
-                try {
-                    $merged = $this->merge_array_data($primary_value, $duplicate_value);
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Merged data size for '{$key}': " . strlen(serialize($merged)) . " bytes");
-                    
-                    // Validate merged data before attempting update
-                    if (!is_array($merged)) {
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Merged data for '{$key}' is not an array, using primary value instead");
-                        $merged = $primary_value;
-                    }
-                    
-                    // Log a sample of the merged data structure for debugging
-                    if ($key === 'sp_statistics') {
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Sample merged data structure: " . substr(print_r($merged, true), 0, 500));
-                    }
-                    
-                    // Try to update and capture any WordPress errors
-                    $update_result = update_post_meta($primary_id, $key, $merged);
-                    if ($update_result === false) {
-                        global $wpdb;
-                        error_log("SP Merge [User: " . intval($user_id) . "]: WordPress database error: " . $wpdb->last_error);
-                        error_log("SP Merge [User: " . intval($user_id) . "]: MySQL error: " . mysqli_error($wpdb->dbh));
-                        
-                        // Try a simpler approach - just keep the primary value
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Attempting fallback - keeping primary value for '{$key}'");
-                        $fallback_result = update_post_meta($primary_id, $key, $primary_value);
-                        if ($fallback_result === false) {
-                            error_log("SP Merge [User: " . intval($user_id) . "]: Fallback also failed for '{$key}' - FAILING MERGE to preserve data integrity");
-                            throw new Exception(__('Failed to update merged meta field', 'sportspress-player-merge') . ': ' . $key);
-                        }
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Fallback successful - kept primary value for '{$key}'");
-                    } else {
-                        error_log("SP Merge [User: " . intval($user_id) . "]: Successfully merged field '{$key}'");
-                    }
-                } catch (Exception $e) {
-                    error_log("SP Merge [User: " . intval($user_id) . "]: Exception merging '{$key}': " . $e->getMessage());
-                    throw $e;
-                }
-            }
-        } else {
-            error_log("SP Merge [User: " . intval($user_id) . "]: No merge needed for '{$key}' - keeping primary value");
-        }
-    }
-    
-    private function merge_array_data($primary_data, $duplicate_data) {
-        if (!is_array($primary_data)) {
-            $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Primary data is not array, converting to empty array");
-            $primary_data = [];
-        }
-        if (!is_array($duplicate_data)) {
-            $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Duplicate data is not array, converting to empty array");
-            $duplicate_data = [];
-        }
-        
-        // For SportsPress statistics, merge carefully to avoid data corruption
-        // Structure: [league_id][event_id][stat_key] = value
-        foreach ($duplicate_data as $league_id => $league_data) {
-            if (!isset($primary_data[$league_id])) {
-                // League doesn't exist in primary, add it completely
-                $primary_data[$league_id] = $league_data;
-            } elseif (is_array($league_data) && is_array($primary_data[$league_id])) {
-                // League exists in both, merge event data
-                foreach ($league_data as $event_id => $event_stats) {
-                    if (!isset($primary_data[$league_id][$event_id])) {
-                        $primary_data[$league_id][$event_id] = $event_stats;
-                    }
-                }
-            }
-        }
-        
-        return $primary_data;
-    }
-    
-    private function cleanup_duplicate_meta($player_id) {
-        $multi_value_fields = ['sp_team', 'sp_current_team', 'sp_past_team'];
-        
-        foreach ($multi_value_fields as $field) {
-            $values = get_post_meta($player_id, $field);
-            if (count($values) > 1) {
-                $unique_values = array_unique($values, SORT_STRING);
-                if (count($unique_values) < count($values)) {
-                    // Remove all entries and re-add unique ones
-                    delete_post_meta($player_id, $field);
-                    foreach ($unique_values as $value) {
-                        if ($value !== '' && $value !== '0') {
-                            if (!add_post_meta($player_id, $field, $value)) {
-                                throw new Exception(__('Failed to restore unique meta field', 'sportspress-player-merge') . ': ' . $field);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    private function update_references($primary_id, $duplicate_id) {
-        global $wpdb;
-        
-        $result = $wpdb->query($wpdb->prepare(
-            "UPDATE {$wpdb->postmeta} 
-            SET meta_value = REPLACE(meta_value, %s, %s) 
-            WHERE meta_key LIKE %s 
-            AND meta_value LIKE %s",
-            $duplicate_id,
-            $primary_id,
-            'sp_%',
-            '%' . $wpdb->esc_like($duplicate_id) . '%'
-        ));
-        if ($result === false) {
-            $user_id = get_current_user_id();
-            error_log("SP Merge [User: " . intval($user_id) . "]: Failed to update player references - " . $wpdb->last_error);
-            throw new Exception(__('Database update failed', 'sportspress-player-merge'));
-        }
-    }
+
+	/**
+	 * Simple meta keys on events that store individual player IDs as separate rows.
+	 *
+	 * @var string[]
+	 */
+	private const SIMPLE_PLAYER_META_KEYS = array(
+		'sp_player',
+		'sp_offense',
+		'sp_defense',
+	);
+
+	/**
+	 * Serialized meta keys on events where player IDs appear as array keys.
+	 *
+	 * @var string[]
+	 */
+	private const SERIALIZED_PLAYER_META_KEYS = array(
+		'sp_players',
+		'sp_timeline',
+		'sp_order',
+		'sp_stars',
+	);
+
+	/**
+	 * Execute a full merge operation with transaction safety.
+	 *
+	 * @param int   $primary_id    The player ID to keep.
+	 * @param int[] $duplicate_ids Player IDs to merge and delete.
+	 * @return array{success: bool, backup_id?: string, message?: string}
+	 */
+	public function execute_merge( int $primary_id, array $duplicate_ids ): array {
+		global $wpdb;
+
+		$backup    = new SP_Merge_Backup();
+		$backup_id = null;
+
+		try {
+			$backup_id = $backup->create_merge_backup( $primary_id, $duplicate_ids );
+			if ( ! $backup_id ) {
+				throw new Exception( __( 'Failed to create backup before merge', 'sportspress-player-merge' ) );
+			}
+
+			$wpdb->query( 'START TRANSACTION' );
+
+			foreach ( $duplicate_ids as $duplicate_id ) {
+				$this->merge_single_player( $primary_id, (int) $duplicate_id );
+			}
+
+			foreach ( $duplicate_ids as $duplicate_id ) {
+				$post = get_post( $duplicate_id );
+				if ( ! $post ) {
+					continue;
+				}
+				$deleted = wp_delete_post( $duplicate_id, true );
+				if ( ! $deleted ) {
+					throw new Exception(
+						sprintf(
+							/* translators: %d: player ID */
+							__( 'Failed to delete duplicate player %d', 'sportspress-player-merge' ),
+							$duplicate_id
+						)
+					);
+				}
+			}
+
+			$wpdb->query( 'COMMIT' );
+
+			$this->clear_sportspress_caches( $primary_id, $duplicate_ids );
+
+			return array(
+				'success'   => true,
+				'backup_id' => $backup_id,
+			);
+
+		} catch ( Exception $e ) {
+			$wpdb->query( 'ROLLBACK' );
+
+			if ( $backup_id ) {
+				$backup->delete_backup( $backup_id );
+			}
+
+			return array(
+				'success' => false,
+				'message' => __( 'Merge failed', 'sportspress-player-merge' ) . ': ' . $e->getMessage(),
+			);
+		}
+	}
+
+	/**
+	 * Merge a single duplicate player into the primary.
+	 *
+	 * @param int $primary_id   Primary player ID.
+	 * @param int $duplicate_id Duplicate player ID.
+	 * @throws Exception On failure.
+	 */
+	private function merge_single_player( int $primary_id, int $duplicate_id ): void {
+		$this->merge_taxonomies( $primary_id, $duplicate_id );
+		$this->merge_meta_data( $primary_id, $duplicate_id );
+		$this->update_event_references( $primary_id, $duplicate_id );
+	}
+
+	/**
+	 * Merge all taxonomies registered for sp_player.
+	 *
+	 * @param int $primary_id   Primary player ID.
+	 * @param int $duplicate_id Duplicate player ID.
+	 */
+	private function merge_taxonomies( int $primary_id, int $duplicate_id ): void {
+		$taxonomies = get_object_taxonomies( 'sp_player' );
+
+		foreach ( $taxonomies as $taxonomy ) {
+			$primary_terms   = wp_get_object_terms( $primary_id, $taxonomy, array( 'fields' => 'ids' ) );
+			$duplicate_terms = wp_get_object_terms( $duplicate_id, $taxonomy, array( 'fields' => 'ids' ) );
+
+			if ( is_wp_error( $primary_terms ) || is_wp_error( $duplicate_terms ) ) {
+				continue;
+			}
+
+			$merged = array_unique( array_merge( $primary_terms, $duplicate_terms ) );
+
+			if ( count( $merged ) > count( $primary_terms ) ) {
+				wp_set_object_terms( $primary_id, $merged, $taxonomy );
+			}
+		}
+	}
+
+	/**
+	 * Merge player meta data intelligently.
+	 *
+	 * @param int $primary_id   Primary player ID.
+	 * @param int $duplicate_id Duplicate player ID.
+	 * @throws Exception On failure.
+	 */
+	private function merge_meta_data( int $primary_id, int $duplicate_id ): void {
+		$duplicate_meta = get_post_meta( $duplicate_id );
+
+		// Fields to skip — preserve primary player's display settings.
+		$skip_fields = array( 'sp_columns', 'sp_number' );
+
+		// Serialized array fields that need intelligent merging.
+		$array_merge_fields = array( 'sp_statistics', 'sp_leagues', 'sp_assignments', 'sp_metrics' );
+
+		foreach ( $duplicate_meta as $key => $values ) {
+			if ( 0 !== strpos( $key, 'sp_' ) ) {
+				continue;
+			}
+
+			if ( in_array( $key, $skip_fields, true ) ) {
+				continue;
+			}
+
+			if ( in_array( $key, $array_merge_fields, true ) ) {
+				$this->merge_array_field( $primary_id, $duplicate_id, $key );
+				continue;
+			}
+
+			// Multi-value fields: add unique values only.
+			$existing = get_post_meta( $primary_id, $key );
+			foreach ( $values as $value ) {
+				if ( ! in_array( $value, $existing, true ) ) {
+					add_post_meta( $primary_id, $key, $value );
+				}
+			}
+		}
+
+		$this->deduplicate_multi_value_meta( $primary_id );
+	}
+
+	/**
+	 * Merge a serialized array meta field from duplicate into primary.
+	 *
+	 * @param int    $primary_id   Primary player ID.
+	 * @param int    $duplicate_id Duplicate player ID.
+	 * @param string $key          Meta key.
+	 */
+	private function merge_array_field( int $primary_id, int $duplicate_id, string $key ): void {
+		$primary_value   = get_post_meta( $primary_id, $key, true );
+		$duplicate_value = get_post_meta( $duplicate_id, $key, true );
+
+		if ( empty( $duplicate_value ) || ! is_array( $duplicate_value ) ) {
+			return;
+		}
+
+		if ( empty( $primary_value ) || ! is_array( $primary_value ) ) {
+			update_post_meta( $primary_id, $key, $duplicate_value );
+			return;
+		}
+
+		// Deep merge: add keys from duplicate that don't exist in primary.
+		$merged = $this->deep_merge_arrays( $primary_value, $duplicate_value );
+		update_post_meta( $primary_id, $key, $merged );
+	}
+
+	/**
+	 * Deep merge two associative arrays. Primary values take precedence for scalar values.
+	 * For nested arrays, recurse. For keys only in duplicate, add them.
+	 *
+	 * @param array $primary   Primary array.
+	 * @param array $duplicate Duplicate array.
+	 * @return array Merged array.
+	 */
+	private function deep_merge_arrays( array $primary, array $duplicate ): array {
+		foreach ( $duplicate as $key => $value ) {
+			if ( ! isset( $primary[ $key ] ) ) {
+				$primary[ $key ] = $value;
+			} elseif ( is_array( $value ) && is_array( $primary[ $key ] ) ) {
+				$primary[ $key ] = $this->deep_merge_arrays( $primary[ $key ], $value );
+			}
+			// If both have scalar values for the same key, primary wins.
+		}
+		return $primary;
+	}
+
+	/**
+	 * Remove duplicate values from multi-value meta fields.
+	 *
+	 * @param int $player_id Player ID.
+	 */
+	private function deduplicate_multi_value_meta( int $player_id ): void {
+		$fields = array( 'sp_team', 'sp_current_team', 'sp_past_team' );
+
+		foreach ( $fields as $field ) {
+			$values = get_post_meta( $player_id, $field );
+			if ( count( $values ) <= 1 ) {
+				continue;
+			}
+
+			$unique = array_unique( $values, SORT_STRING );
+			if ( count( $unique ) < count( $values ) ) {
+				delete_post_meta( $player_id, $field );
+				foreach ( $unique as $value ) {
+					if ( '' !== $value && '0' !== $value ) {
+						add_post_meta( $player_id, $field, $value );
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Update all event references from duplicate to primary player.
+	 * Uses structure-aware handling for serialized data.
+	 *
+	 * @param int $primary_id   Primary player ID.
+	 * @param int $duplicate_id Duplicate player ID.
+	 * @throws Exception On failure.
+	 */
+	private function update_event_references( int $primary_id, int $duplicate_id ): void {
+		global $wpdb;
+
+		// 1. Simple meta: individual rows with exact player ID values.
+		foreach ( self::SIMPLE_PLAYER_META_KEYS as $meta_key ) {
+			$wpdb->update(
+				$wpdb->postmeta,
+				array( 'meta_value' => (string) $primary_id ),
+				array(
+					'meta_key'   => $meta_key,
+					'meta_value' => (string) $duplicate_id,
+				),
+				array( '%s' ),
+				array( '%s', '%s' )
+			);
+		}
+
+		// 2. Serialized meta: unserialize, replace keys/values, re-serialize.
+		$this->update_serialized_event_meta( $primary_id, $duplicate_id );
+	}
+
+	/**
+	 * Update serialized event meta that contains player IDs as array keys.
+	 *
+	 * @param int $primary_id   Primary player ID.
+	 * @param int $duplicate_id Duplicate player ID.
+	 */
+	private function update_serialized_event_meta( int $primary_id, int $duplicate_id ): void {
+		global $wpdb;
+
+		// Find all events that reference this duplicate player.
+		$event_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
+				WHERE meta_key = 'sp_player' AND meta_value = %s",
+				(string) $duplicate_id
+			)
+		);
+
+		if ( empty( $event_ids ) ) {
+			return;
+		}
+
+		foreach ( $event_ids as $event_id ) {
+			foreach ( self::SERIALIZED_PLAYER_META_KEYS as $meta_key ) {
+				$raw = get_post_meta( (int) $event_id, $meta_key, true );
+				if ( empty( $raw ) || ! is_array( $raw ) ) {
+					continue;
+				}
+
+				$updated = $this->replace_player_id_in_structure( $raw, $primary_id, $duplicate_id );
+				if ( $updated !== $raw ) {
+					update_post_meta( (int) $event_id, $meta_key, $updated );
+				}
+			}
+		}
+	}
+
+	/**
+	 * Recursively replace a player ID used as an array key in a nested structure.
+	 *
+	 * SportsPress structures like sp_players and sp_timeline use:
+	 *   array( team_id => array( player_id => data ) )
+	 *
+	 * This walks the structure and re-keys entries from duplicate_id to primary_id.
+	 *
+	 * @param array $data         The data structure.
+	 * @param int   $primary_id   Primary player ID.
+	 * @param int   $duplicate_id Duplicate player ID.
+	 * @return array Modified structure.
+	 */
+	private function replace_player_id_in_structure( array $data, int $primary_id, int $duplicate_id ): array {
+		$result = array();
+
+		foreach ( $data as $key => $value ) {
+			$new_key = ( (int) $key === $duplicate_id ) ? $primary_id : $key;
+
+			if ( is_array( $value ) ) {
+				$new_value = $this->replace_player_id_in_structure( $value, $primary_id, $duplicate_id );
+			} else {
+				$new_value = ( (int) $value === $duplicate_id ) ? (string) $primary_id : $value;
+			}
+
+			// If primary already exists at this key, merge rather than overwrite.
+			if ( isset( $result[ $new_key ] ) && is_array( $result[ $new_key ] ) && is_array( $new_value ) ) {
+				$result[ $new_key ] = $this->deep_merge_arrays( $result[ $new_key ], $new_value );
+			} else {
+				$result[ $new_key ] = $new_value;
+			}
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Clear SportsPress caches after merge so stats recalculate.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 */
+	private function clear_sportspress_caches( int $primary_id, array $duplicate_ids ): void {
+		// Clear post and meta caches for primary player.
+		clean_post_cache( $primary_id );
+
+		// Fire SportsPress recalculation hooks.
+		if ( function_exists( 'sp_delete_player_data' ) ) {
+			sp_delete_player_data( $primary_id );
+		}
+
+		// Clear transients that SportsPress may have cached.
+		delete_transient( 'sp_player_data_' . $primary_id );
+
+		// Find affected events and clear their caches too.
+		global $wpdb;
+		$event_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
+				WHERE meta_key = 'sp_player' AND meta_value = %s",
+				(string) $primary_id
+			)
+		);
+
+		foreach ( $event_ids as $event_id ) {
+			clean_post_cache( (int) $event_id );
+			delete_transient( 'sp_event_data_' . $event_id );
+		}
+
+		/**
+		 * Fires after a player merge completes and caches are cleared.
+		 *
+		 * @param int   $primary_id    The kept player ID.
+		 * @param int[] $duplicate_ids The merged (deleted) player IDs.
+		 */
+		do_action( 'sp_merge_after_merge', $primary_id, $duplicate_ids );
+	}
 }
