@@ -92,7 +92,7 @@ class SportsPress_Player_Merge_Init {
 		$updater_path = SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-github-updater.php';
 		if ( file_exists( $updater_path ) ) {
 			require_once $updater_path;
-			new SP_Merge_GitHub_Updater( SP_MERGE_PLUGIN_FILE, SP_MERGE_VERSION );
+			$GLOBALS['sp_merge_updater'] = new SP_Merge_GitHub_Updater( SP_MERGE_PLUGIN_FILE, SP_MERGE_VERSION );
 		}
 
 		if ( ! class_exists( 'SportsPress' ) ) {
