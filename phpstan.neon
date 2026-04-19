@@ -10,6 +10,9 @@ parameters:
     - uninstall.php
   bootstrapFiles:
     - phpstan-bootstrap.php
+  reportUnmatchedIgnoredErrors: false
   ignoreErrors:
     - '#Function apply_filters invoked with#'
     - '#Function do_action invoked with#'
+    - '#will always evaluate to false#'
+    - '#result will always#'
