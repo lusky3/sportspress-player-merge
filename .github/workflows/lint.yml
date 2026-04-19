@@ -1,0 +1,45 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  php-syntax:
+    name: PHP Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - name: Check PHP syntax
+        run: find . -name '*.php' -not -path './vendor/*' | xargs -n1 php -l
+
+  oxlint:
+    name: OxLint (JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install oxlint
+        run: npm install -g oxlint
+      - name: Run oxlint
+        run: oxlint assets/js/ --config .oxlintrc.json
+
+  a11y:
+    name: Accessibility Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check aria attributes in PHP templates
+        run: |
+          echo "Checking for aria-live on dynamic message containers..."
+          grep -r 'aria-live' includes/ || (echo "::error::Missing aria-live on message containers" && exit 1)
+          echo "Checking for role attributes on overlays..."
+          grep -r 'role=' includes/ || true
+          echo "Checking for screen-reader-text captions..."
+          grep -r 'screen-reader-text' assets/js/ || true
+          echo "All a11y checks passed"

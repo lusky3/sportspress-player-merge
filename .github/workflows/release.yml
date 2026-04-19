@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-release:
+    name: Validate & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: PHP syntax check
+        run: find . -name '*.php' -not -path './vendor/*' | xargs -n1 php -l
+
+      - name: Validate version consistency
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          HEADER=$(grep -m1 "Version:" sportspress-player-merge.php | sed 's/.*Version:\s*//' | tr -d ' \r')
+          CONSTANT=$(grep "SP_MERGE_VERSION" sportspress-player-merge.php | grep -oP "'[^']+'" | tr -d "'")
+          README=$(grep "Stable tag:" readme.txt | sed 's/.*Stable tag:\s*//' | tr -d ' \r')
+
+          echo "Tag: $TAG"
+          echo "Header: $HEADER"
+          echo "Constant: $CONSTANT"
+          echo "Readme: $README"
+
+          FAIL=0
+          if [ "$TAG" != "$HEADER" ]; then echo "::error::Plugin header version ($HEADER) != tag ($TAG)"; FAIL=1; fi
+          if [ "$TAG" != "$CONSTANT" ]; then echo "::error::SP_MERGE_VERSION ($CONSTANT) != tag ($TAG)"; FAIL=1; fi
+          if [ "$TAG" != "$README" ]; then echo "::error::readme.txt stable tag ($README) != tag ($TAG)"; FAIL=1; fi
+          exit $FAIL
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
