@@ -2,7 +2,7 @@
 Contributors: lusky3
 Tags: sportspress, players, merge, duplicate, sports
 Requires at least: 6.0
-Tested up to: 6.7
+Tested up to: 6.9
 Requires PHP: 8.2
 Stable tag: 1.1.0
 License: GPLv2 or later
@@ -78,6 +78,38 @@ Event box scores (sp_players), timelines (sp_timeline), star selections (sp_star
 
 == Changelog ==
 
+= 1.1.0 =
+* Fuzzy duplicate detection with 14 matching scenarios (nicknames, prefix normalization, typos, accents, bilingual equivalents, compound names, and more)
+* Tiered confidence scoring: High ≥90%, Medium ≥70%, Low <70%
+* Email integration: uses spt_email from SportsPress Admin Tools for matching (+20% boost) and display
+* Length-aware Levenshtein thresholds prevent false positives on short names
+* SportsPress position abbreviations (G), (C), (D) stripped before matching
+
+= 1.0.0 =
+* Fix: serialized event meta ordering bug (pre-collect event IDs before simple meta update)
+* Fix: XSS in duplicate scan results (escape all player names via escapeHtml helper)
+* Fix: unbounded query capped at 2000 players with batched event count query
+* Fix: lock race condition (single mechanism based on object cache availability)
+* Feature: featured image handling (copy thumbnail from duplicate to primary)
+* Feature: richer execute confirmation dialog showing primary name and duplicate count
+* Feature: retain backup after revert (mark 'reverted' instead of deleting)
+* Feature: plugin_version field in backup data JSON
+* Feature: .pot translation file
+* Feature: Select2 bundled locally (no CDN dependency)
+* Fix: aria-live on message container, scoped button selector
+* Fix: readme.txt stable tag and version requirements
+
+= 0.4.0 =
+* Real player names in Select2 dropdowns with team, position, and event count
+* Per-player event counts with auto-select best primary by events
+* Certainty text labels (High/Medium/Low)
+* Draggable cards with localStorage persistence
+* Table caption for screen readers
+* 50-group cap disclosure
+* Column centering for Events, Certainty, Action
+* Fix: event count query (query events referencing player, not player referencing events)
+* GitHub updater for automatic updates from releases
+
 = 0.3.0 =
 * **BREAKING**: Backup data format changed; existing v0.2.0 backups may not revert correctly
 * Replace blind SQL REPLACE with structure-aware serialized data handling
@@ -113,6 +145,12 @@ Event box scores (sp_players), timelines (sp_timeline), star selections (sp_star
 * Initial release
 
 == Upgrade Notice ==
+
+= 1.1.0 =
+Adds intelligent fuzzy duplicate detection with 14 matching scenarios. Existing exact-match duplicates will now also show nickname, typo, and bilingual matches.
+
+= 1.0.0 =
+Production-ready release. Fixes data integrity bugs, XSS vulnerabilities, and performance issues. Backup table adds 'status' column (auto-migrated).
 
 = 0.3.0 =
 Major rewrite addressing security, data integrity, and SportsPress integration. Existing backups from v0.2.0 may not revert correctly. Take a database backup before upgrading.
