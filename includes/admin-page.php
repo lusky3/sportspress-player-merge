@@ -136,6 +136,24 @@ if ( ! defined( 'ABSPATH' ) ) {
 		</div>
 		<?php endif; ?>
 
+		<!-- Possible Duplicates -->
+		<div class="sp-merge-card sp-duplicates-section">
+			<div class="sp-merge-card-header">
+				<h2>
+					<span class="dashicons dashicons-search"></span>
+					<?php esc_html_e( 'Possible Duplicates', 'sportspress-player-merge' ); ?>
+				</h2>
+				<button type="button" id="scan-duplicates" class="button button-secondary">
+					<?php esc_html_e( 'Scan for Duplicates', 'sportspress-player-merge' ); ?>
+				</button>
+			</div>
+			<div class="sp-merge-card-body">
+				<div id="duplicates-content">
+					<p><?php esc_html_e( "Click 'Scan for Duplicates' to find players with matching names.", 'sportspress-player-merge' ); ?></p>
+				</div>
+			</div>
+		</div>
+
 		<!-- Status Messages -->
 		<div id="sp-merge-messages" class="sp-merge-messages"></div>
 

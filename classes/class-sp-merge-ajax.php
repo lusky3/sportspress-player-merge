@@ -293,14 +293,116 @@ class SP_Merge_Ajax {
 	}
 
 	/**
-	 * Handle AJAX player search for Select2.
+	 * Find possible duplicate players by matching names.
 	 */
-	public function search_players(): void {
+	public function find_duplicates(): void {
 		if ( ! $this->validate_request() ) {
 			return;
 		}
 
-		$search = isset( $_POST['search'] ) ? sanitize_text_field( wp_unslash( $_POST['search'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$players = get_posts(
+			array(
+				'post_type'      => 'sp_player',
+				'posts_per_page' => -1,
+				'no_found_rows'  => true,
+				'post_status'    => 'publish',
+				'fields'         => '',
+			)
+		);
+
+		$grouped = array();
+		foreach ( $players as $player ) {
+			$key = strtolower( trim( $player->post_title ) );
+			$grouped[ $key ][] = $player;
+		}
+
+		$groups = array();
+		foreach ( $grouped as $name => $group ) {
+			if ( count( $group ) < 2 ) {
+				continue;
+			}
+
+			$details = array();
+			$teams   = array();
+			foreach ( $group as $p ) {
+				$team    = '';
+				$team_id = 0;
+				$t_ids   = get_post_meta( $p->ID, 'sp_current_team' );
+				foreach ( array_reverse( $t_ids ) as $tid ) {
+					if ( $tid && '0' !== $tid ) {
+						$t = get_post( (int) $tid );
+						if ( $t && 'sp_team' === $t->post_type ) {
+							$team    = $t->post_title;
+							$team_id = $t->ID;
+							break;
+						}
+					}
+				}
+				$teams[]   = $team_id;
+				global $wpdb;
+				$events    = (int) $wpdb->get_var( $wpdb->prepare(
+					"SELECT COUNT(*) FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE p.post_type = 'sp_event' AND pm.meta_key = 'sp_player' AND pm.meta_value = %s",
+					$p->ID
+				) );
+				$positions  = wp_get_post_terms( $p->ID, 'sp_position', array( 'fields' => 'names' ) );
+				$position   = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
+				$details[] = array(
+					'id'        => $p->ID,
+					'name'      => $p->post_title,
+					'team'      => $team,
+					'position'  => $position,
+					'events'    => $events,
+					'edit_link' => get_edit_post_link( $p->ID, 'raw' ),
+				);
+			}
+
+			$certainty = 95;
+			$team_ids  = array_filter( $teams );
+			if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $group ) ) {
+				$certainty = 100;
+			}
+
+			// Reduce certainty when players have different positions — may be intentional separate profiles.
+			$all_positions = array_column( $details, 'position' );
+			$all_positions = array_filter( $all_positions, 'strlen' );
+			if ( count( $all_positions ) >= 2 && count( array_unique( $all_positions ) ) > 1 ) {
+				$certainty = min( $certainty, 70 );
+			}
+
+			$groups[] = array(
+				'name'      => $name,
+				'certainty' => $certainty,
+				'players'   => $details,
+			);
+		}
+
+		usort( $groups, function ( $a, $b ) {
+			return $b['certainty'] - $a['certainty'];
+		} );
+
+		$groups = array_slice( $groups, 0, 50 );
+
+		wp_send_json_success( array( 'groups' => $groups ) );
+	}
+
+	/**
+	 * Handle AJAX player search for Select2.
+	 *
+	 * Select2 sends search requests via GET, so we read from $_GET.
+	 */
+	public function search_players(): void {
+		if ( ! current_user_can( 'edit_sp_players' ) ) {
+			$this->send_error( __( 'Insufficient permissions', 'sportspress-player-merge' ) );
+			return;
+		}
+
+		$nonce = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( ! wp_verify_nonce( $nonce, 'sp_merge_nonce' ) ) {
+			$this->send_error( __( 'Security check failed', 'sportspress-player-merge' ) );
+			return;
+		}
+
+		$search = isset( $_GET['search'] ) ? sanitize_text_field( wp_unslash( $_GET['search'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 
 		$args = array(
 			'post_type'      => 'sp_player',
