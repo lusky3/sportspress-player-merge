@@ -14,5 +14,8 @@ parameters:
   ignoreErrors:
     - '#Function apply_filters invoked with#'
     - '#Function do_action invoked with#'
-    - '#will always evaluate to false#'
+    - '#will always evaluate to (true|false)#'
     - '#result will always#'
+    - '#never returns .* so it can be removed#'
+    - '#is unused#'
+    - '#Parameter .* of function array_filter expects#'
