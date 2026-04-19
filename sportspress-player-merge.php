@@ -3,7 +3,7 @@
  * Plugin Name: SportsPress Player Merge
  * Plugin URI: https://github.com/lusky3/sportspress-player-merge
  * Description: Advanced tool to merge duplicate SportsPress players with data preservation and revert functionality
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Cody (lusky3)
  * Author URI: https://github.com/lusky3
  * License: GPL v2 or later
@@ -107,6 +107,7 @@ class SportsPress_Player_Merge_Init {
 		);
 
 		$class_files = array(
+			'class-sp-merge-name-matcher.php',
 			'class-sp-merge-controller.php',
 			'class-sp-merge-admin.php',
 			'class-sp-merge-ajax.php',
