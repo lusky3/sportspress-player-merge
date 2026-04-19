@@ -29,6 +29,24 @@ jobs:
       - name: Run oxlint
         run: oxlint assets/js/ --config .oxlintrc.json
 
+  semgrep:
+    name: Semgrep (Security Patterns)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run Semgrep
+        run: semgrep scan --config p/php --config p/wordpress --error
+
+  copy-paste:
+    name: Copy-Paste Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run jscpd
+        run: npx jscpd --min-lines 5 --threshold 5 --ignore 'assets/vendor/**,languages/**,.kiro/**'
+
   a11y:
     name: Accessibility Check
     runs-on: ubuntu-latest
