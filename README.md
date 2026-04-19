@@ -1,156 +1,108 @@
 # SportsPress Player Merge
 
-A WordPress plugin that provides advanced player merging functionality for SportsPress with comprehensive data preservation, intelligent statistics handling, and full revert capabilities.
+A WordPress plugin that detects and merges duplicate SportsPress players using intelligent fuzzy name matching, with full data preservation and revert capabilities.
+
+[![Lint](https://github.com/lusky3/sportspress-player-merge/actions/workflows/lint.yml/badge.svg)](https://github.com/lusky3/sportspress-player-merge/actions/workflows/lint.yml)
+[![Security](https://github.com/lusky3/sportspress-player-merge/actions/workflows/security.yml/badge.svg)](https://github.com/lusky3/sportspress-player-merge/actions/workflows/security.yml)
+[![Compatibility](https://github.com/lusky3/sportspress-player-merge/actions/workflows/compat.yml/badge.svg)](https://github.com/lusky3/sportspress-player-merge/actions/workflows/compat.yml)
 
 ## Features
 
-- **Smart Player Merging**: Merge duplicate players while preserving all data including complex statistics structures
-- **Advanced Statistics Handling**: Intelligent merging of nested SportsPress statistics arrays without data corruption
-- **Reference Tracking**: Tracks and properly handles all database references (player lists, events, etc.)
-- **Team Management**: Handles current and past team assignments with deduplication
-- **Data Preview**: See exactly what will be merged before execution with expandable sections
-- **Full Revert**: Complete undo functionality that restores deleted players and reverts all references
-- **Statistics Recalculation**: Automatically triggers SportsPress statistics recalculation after operations
-- **Modern Interface**: Clean, responsive admin interface with AJAX interactions
-- **Robust Backup System**: Uses dedicated database table with comprehensive data preservation
-- **Performance Optimized**: Handles large datasets and complex statistics structures efficiently
+- **Fuzzy Duplicate Detection**: 14 matching scenarios including nicknames, prefix normalization (Mac/Mc/O'), typos, accents, French/English bilingual equivalents, and more
+- **Tiered Confidence Scoring**: High (≥90%), Medium (≥70%), Low (<70%) with team/position adjustments
+- **Smart Player Merging**: Preserves all data including complex serialized statistics structures
+- **Featured Image Handling**: Copies thumbnail from duplicate to primary if primary has none
+- **Email Integration**: Optionally uses `spt_email` from SportsPress Admin Tools for matching and display
+- **Data Preview**: See exactly what will be merged before execution
+- **Full Revert**: Complete undo that restores deleted players and all references (backups retained, not deleted)
+- **Draggable UI Cards**: Reorder interface sections with localStorage persistence
+- **Accessible**: ARIA live regions, screen reader captions, keyboard-navigable confirmation dialogs
+- **Auto-Updates**: Built-in GitHub updater — updates appear in WordPress plugin dashboard
+
+## Requirements
+
+- **WordPress**: 6.0+
+- **PHP**: 8.2+
+- **SportsPress**: Required (any version)
 
 ## Installation
 
-1. Upload the plugin folder to `/wp-content/plugins/`
-2. Activate the plugin through the WordPress admin
-3. Navigate to **SportsPress → Players → Player Merge**
+1. Download the latest release from [GitHub Releases](https://github.com/lusky3/sportspress-player-merge/releases)
+2. Upload to `/wp-content/plugins/sportspress-player-merge/`
+3. Activate through WordPress admin
+4. Navigate to **SportsPress → Players → Player Merge**
 
-## Usage
+Updates are delivered automatically via the built-in GitHub updater.
 
-1. **Select Primary Player**: Choose the player to keep (retains all data)
-2. **Select Duplicates**: Choose players to merge and delete
-3. **Preview**: Review the detailed merge preview showing data changes
-4. **Execute**: Perform the merge operation with full backup creation
-5. **Revert**: Undo the merge if needed (restores deleted players and all references)
+## Duplicate Detection
 
-## Data Handling
+The scanner identifies potential duplicates using 14 matching scenarios:
 
-### Reference Management
+| Scenario | Example | Certainty |
+|----------|---------|-----------|
+| Exact match | Mike Scott = mike scott | 100% |
+| Accent/prefix normalization | O'Connor=OConnor, MacBeth=McBeth | 95% |
+| French compound first names | Jean-Pierre ↔ Jean Pierre | 85% |
+| Nicknames/diminutives | Richard=Rick=Dick, Michael=Mike | 70% |
+| French/English bilingual | Marc=Mark, Denis=Dennis | 70% |
+| Typos (Levenshtein) | Cooper=Coopper, Mathew=Matthew | 65% |
+| Middle name difference | John Michael Smith ↔ John Smith | 60% |
+| Suffix variations | James Porter Sr. ↔ James Porter | 100% |
+| Initial match | J. Smith ↔ John Smith | 50% |
+| Name reversal | Smith, John ↔ John Smith | 50% |
 
-- **Player Lists**: Automatically updates player list memberships
-- **Event Assignments**: Preserves all game and event assignments
-- **Statistics**: Maintains statistical data and triggers recalculation
-- **Custom References**: Handles all SportsPress metadata references
-
-### Team Management
-
-- Preserves current and past team assignments
-- Combines team data from all merged players
-- Prevents duplicate team assignments
-- Maintains team relationship integrity
-
-### Merge Logic
-
-- **Teams**: Combines without duplicates, preserving current/past status
-- **Leagues/Divisions**: Merges all league assignments across seasons
-- **Seasons**: Combines all season participation
-- **Positions**: Merges all position assignments
-- **Assignments**: Preserves all sp_assignments data
-- **Custom Fields**: Preserves all SportsPress metadata with proper serialization
-
-## Technical Details
-
-- **WordPress Version**: 6.0+
-- **PHP Version**: 8.2+
-- **Dependencies**: SportsPress plugin
-- **Database**: Uses dedicated wp_sp_merge_backups table for backup storage
-- **Security**: Comprehensive nonce verification and capability checks
-- **Error Handling**: Extensive try-catch blocks with detailed logging
+Scoring adjustments: +5% same team, -20% different positions, +20% matching email.
 
 ## File Structure
 
 ```text
 sportspress-player-merge/
+├── .github/workflows/       # CI/CD (lint, security, compat, release, plugin-check)
 ├── assets/
-│   ├── css/admin.css          # Modern responsive styling
-│   └── js/admin.js            # AJAX interactions and UX
+│   ├── css/admin.css        # Admin styling
+│   ├── js/admin.js          # AJAX interactions, Select2, drag-and-drop
+│   └── vendor/select2/      # Bundled Select2 (no CDN dependency)
 ├── classes/
-│   └── class-player-merge.php # Core functionality (1000+ lines)
+│   ├── class-sp-merge-admin.php          # Admin menu and asset enqueue
+│   ├── class-sp-merge-ajax.php           # AJAX handlers
+│   ├── class-sp-merge-backup.php         # Backup/restore system
+│   ├── class-sp-merge-controller.php     # Component coordinator
+│   ├── class-sp-merge-github-updater.php # Auto-update from GitHub releases
+│   ├── class-sp-merge-name-matcher.php   # Fuzzy matching engine (14 scenarios)
+│   ├── class-sp-merge-preview.php        # Merge preview generation
+│   └── class-sp-merge-processor.php      # Core merge logic
 ├── includes/
-│   └── admin-page.php         # Admin interface template
-├── sportspress-player-merge.php # Main plugin file
-├── uninstall.php              # Cleanup on uninstall
-├── README.md
-├── readme.txt
-└── license.txt
+│   └── admin-page.php       # Admin page template
+├── languages/
+│   └── sportspress-player-merge.pot  # Translation template
+├── sportspress-player-merge.php  # Main plugin file
+├── uninstall.php            # Clean removal
+├── phpstan.neon             # Static analysis config
+└── .oxlintrc.json           # JS linting config
 ```
 
-## Key Improvements
+## CI/CD
 
-### Enhanced Statistics Merging (v0.2.0)
+All PRs and pushes to main run:
 
-- **Intelligent Array Merging**: Properly handles complex nested SportsPress statistics structures
-- **Data Corruption Prevention**: Advanced validation prevents statistics data corruption during merge
-- **Large Dataset Support**: Optimized for players with extensive statistics (12KB+ data structures)
-- **League-Event Structure**: Preserves SportsPress league → event → statistics hierarchy
+- **Lint**: PHP syntax, oxlint (JS), Semgrep (security patterns), jscpd (copy-paste detection), accessibility checks
+- **Security**: PHPStan level 5 with WordPress stubs
+- **Compatibility**: PHP 8.2/8.3/8.4 × WordPress 6.0/latest matrix
+- **Plugin Check**: WordPress Plugin Check (general, a11y, performance, security categories)
+- **Release**: Version consistency validation on tag push + auto GitHub Release
 
-### Reference Tracking System
-
-- Tracks all database references before merging
-- Properly reverts references during undo operations
-- Prevents orphaned data in player lists and events
-- Dynamic reference lookup for accurate restoration
-
-### Enhanced Backup System
-
-- Dedicated database table for better performance
-- Comprehensive data backup including taxonomies
-- Automatic cleanup of old backups
-- Proper serialization handling with validation
-
-### Statistics Integration
-
-- Automatic statistics recalculation after operations
-- Handles sp_assignments data properly
-- Triggers SportsPress calculation hooks
-- Clears statistics cache when needed
-
-## Development
-
-### Requirements
-
-- WordPress development environment
-- SportsPress plugin installed
-- PHP debugging enabled (recommended)
-- MySQL/MariaDB database
-
-### Architecture
-
-- **Object-oriented design** with comprehensive error handling
-- **AJAX-driven interface** for smooth user experience
-- **Modular methods** for easy maintenance and extension
-- **WordPress coding standards** compliance
-
-### Key Methods
-
-- `find_player_references()` - Tracks all database references
-- `revert_player_references()` - Reverts references during undo
-- `recalculate_player_statistics()` - Triggers stats recalculation
-- `backup_player_data()` - Creates comprehensive backups
-- `restore_player_data()` - Restores from backup with validation
-
-### Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test thoroughly with real SportsPress data
+4. Ensure all CI checks pass
 5. Submit a pull request
 
 ## License
 
-GPL v2 or later - see license.txt
-
-## Support
-
-For issues and feature requests, please use the GitHub issue tracker.
+GPL v2 or later — see license.txt
 
 ## AI Disclosure
 
-This plugin was developed with AI assistance (Kiro/Claude). All code has undergone multiple rounds of automated security, performance, SportsPress integration, and data integrity review.
+This plugin was developed with AI assistance (Kiro/Claude). All code has undergone automated security, performance, and data integrity review via PHPStan, Semgrep, and WordPress Plugin Check.
