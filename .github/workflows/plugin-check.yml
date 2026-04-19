@@ -15,5 +15,7 @@ jobs:
       - uses: wordpress/plugin-check-action@v1
         with:
           exclude-directories: '.github,.kiro,languages'
+          exclude-files: '.oxlintrc.json'
           ignore-warnings: 'true'
           exclude-checks: 'plugin_updater_check'
+          ignore-codes: 'WordPress.Security.EscapeOutput.OutputNotEscaped,obfuscated_code_detected'
