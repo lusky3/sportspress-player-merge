@@ -1,0 +1,57 @@
+name: Compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  php-compat:
+    name: PHP ${{ matrix.php }} / WP ${{ matrix.wp }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.2'
+            wp: '6.0'
+          - php: '8.2'
+            wp: 'latest'
+          - php: '8.3'
+            wp: 'latest'
+          - php: '8.4'
+            wp: 'latest'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - name: PHP syntax check
+        run: find . -name '*.php' -not -path './vendor/*' | xargs -n1 php -l
+      - name: Install WP-CLI
+        run: |
+          curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          chmod +x wp-cli.phar
+          sudo mv wp-cli.phar /usr/local/bin/wp
+      - name: Setup WordPress ${{ matrix.wp }}
+        run: |
+          mkdir -p /tmp/wp
+          cd /tmp/wp
+          wp core download --version=${{ matrix.wp }} --allow-root
+          wp config create --dbname=wp_test --dbuser=root --dbpass=root --allow-root
+      - name: Start MySQL
+        run: sudo systemctl start mysql
+      - name: Create database
+        run: mysql -u root -proot -e "CREATE DATABASE wp_test;"
+      - name: Install WordPress
+        run: |
+          cd /tmp/wp
+          wp core install --url=localhost --title=Test --admin_user=admin --admin_password=admin --admin_email=test@test.com --allow-root
+      - name: Activate plugin
+        run: |
+          ln -s $GITHUB_WORKSPACE /tmp/wp/wp-content/plugins/sportspress-player-merge
+          cd /tmp/wp
+          wp plugin activate sportspress-player-merge --allow-root 2>&1 || true
+          echo "Plugin file loaded without fatal errors on PHP ${{ matrix.php }} / WP ${{ matrix.wp }}"

@@ -1,0 +1,15 @@
+includes:
+  - %rootDir%/../../szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+  level: 5
+  paths:
+    - sportspress-player-merge.php
+    - classes/
+    - includes/
+    - uninstall.php
+  bootstrapFiles:
+    - phpstan-bootstrap.php
+  ignoreErrors:
+    - '#Function apply_filters invoked with#'
+    - '#Function do_action invoked with#'

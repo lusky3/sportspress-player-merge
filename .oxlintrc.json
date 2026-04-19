@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-undef": "off",
+    "eqeqeq": "warn",
+    "no-debugger": "error",
+    "no-alert": "off",
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error"
+  },
+  "env": {
+    "browser": true,
+    "jquery": true
+  },
+  "globals": {
+    "jQuery": "readonly",
+    "spMergeAjax": "readonly",
+    "wp": "readonly",
+    "ajaxurl": "readonly"
+  }
+}
