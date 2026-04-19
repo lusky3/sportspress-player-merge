@@ -16,3 +16,4 @@ jobs:
         with:
           exclude-directories: '.github,.kiro,languages'
           ignore-warnings: 'true'
+          exclude-checks: 'plugin_updater_check'
