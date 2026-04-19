@@ -316,19 +316,14 @@ class SP_Merge_Ajax {
 			update_object_term_cache( $player_ids, 'sp_player' );
 		}
 
-		$grouped = array();
-		foreach ( $players as $player ) {
-			$key = strtolower( trim( $player->post_title ) );
-			$grouped[ $key ][] = $player;
-		}
+		// Use fuzzy name matcher to find duplicate groups.
+		$matched_groups = SP_Merge_Name_Matcher::find_groups( $players );
 
-		// Batch event count query for all duplicate player IDs.
+		// Batch event count query for all matched player IDs.
 		$duplicate_ids = array();
-		foreach ( $grouped as $group ) {
-			if ( count( $group ) >= 2 ) {
-				foreach ( $group as $p ) {
-					$duplicate_ids[] = $p->ID;
-				}
+		foreach ( $matched_groups as $mg ) {
+			foreach ( $mg['players'] as $p ) {
+				$duplicate_ids[] = $p->ID;
 			}
 		}
 		$event_counts = array();
@@ -346,14 +341,10 @@ class SP_Merge_Ajax {
 		}
 
 		$groups = array();
-		foreach ( $grouped as $name => $group ) {
-			if ( count( $group ) < 2 ) {
-				continue;
-			}
-
+		foreach ( $matched_groups as $mg ) {
 			$details = array();
 			$teams   = array();
-			foreach ( $group as $p ) {
+			foreach ( $mg['players'] as $p ) {
 				$team    = '';
 				$team_id = 0;
 				$t_ids   = get_post_meta( $p->ID, 'sp_current_team' );
@@ -381,29 +372,30 @@ class SP_Merge_Ajax {
 				);
 			}
 
-			$certainty = 95;
-			$team_ids  = array_filter( $teams );
-			if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $group ) ) {
-				$certainty = 100;
+			$certainty = $mg['certainty'];
+
+			// Boost certainty when all players share the same team.
+			$team_ids = array_filter( $teams );
+			if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $mg['players'] ) ) {
+				$certainty = min( 100, $certainty + 5 );
 			}
 
-			// Reduce certainty when players have different positions — may be intentional separate profiles.
+			// Reduce certainty when players have different positions.
 			$all_positions = array_column( $details, 'position' );
 			$all_positions = array_filter( $all_positions, 'strlen' );
 			if ( count( $all_positions ) >= 2 && count( array_unique( $all_positions ) ) > 1 ) {
-				$certainty = min( $certainty, 70 );
+				$certainty = max( 50, $certainty - 20 );
 			}
 
 			$groups[] = array(
-				'name'      => $name,
+				'name'      => $details[0]['name'],
 				'certainty' => $certainty,
+				'scenario'  => $mg['scenario'],
 				'players'   => $details,
 			);
 		}
 
-		usort( $groups, function ( $a, $b ) {
-			return $b['certainty'] - $a['certainty'];
-		} );
+		usort( $groups, fn( $a, $b ) => $b['certainty'] - $a['certainty'] );
 
 		$groups = array_slice( $groups, 0, 50 );
 
