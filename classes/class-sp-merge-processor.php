@@ -131,14 +131,9 @@ class SP_Merge_Processor {
 	 * @return bool True if lock acquired.
 	 */
 	private function acquire_lock(): bool {
-		// wp_cache_add is atomic — returns false if key already exists.
 		if ( wp_using_ext_object_cache() ) {
-			$acquired = wp_cache_add( self::LOCK_KEY, get_current_user_id(), 'sp_merge', 300 );
-			if ( ! $acquired ) {
-				return false;
-			}
+			return wp_cache_add( self::LOCK_KEY, get_current_user_id(), 'sp_merge', 300 );
 		}
-		// Also set transient as persistent fallback / for non-object-cache environments.
 		if ( get_transient( self::LOCK_KEY ) ) {
 			return false;
 		}
@@ -150,8 +145,11 @@ class SP_Merge_Processor {
 	 * Release the merge lock.
 	 */
 	private function release_lock(): void {
-		delete_transient( self::LOCK_KEY );
-		wp_cache_delete( self::LOCK_KEY, 'sp_merge' );
+		if ( wp_using_ext_object_cache() ) {
+			wp_cache_delete( self::LOCK_KEY, 'sp_merge' );
+		} else {
+			delete_transient( self::LOCK_KEY );
+		}
 	}
 
 	/**
@@ -164,8 +162,21 @@ class SP_Merge_Processor {
 	private function merge_single_player( int $primary_id, int $duplicate_id ): void {
 		$this->merge_taxonomies( $primary_id, $duplicate_id );
 		$this->merge_meta_data( $primary_id, $duplicate_id );
+		$this->merge_featured_image( $primary_id, $duplicate_id );
 		$this->update_event_references( $primary_id, $duplicate_id );
 		$this->update_player_list_references( $primary_id, $duplicate_id );
+	}
+
+	/**
+	 * Copy featured image from duplicate to primary if primary has none.
+	 *
+	 * @param int $primary_id   Primary player ID.
+	 * @param int $duplicate_id Duplicate player ID.
+	 */
+	private function merge_featured_image( int $primary_id, int $duplicate_id ): void {
+		if ( ! has_post_thumbnail( $primary_id ) && has_post_thumbnail( $duplicate_id ) ) {
+			set_post_thumbnail( $primary_id, get_post_thumbnail_id( $duplicate_id ) );
+		}
 	}
 
 	/**
@@ -330,6 +341,15 @@ class SP_Merge_Processor {
 	private function update_event_references( int $primary_id, int $duplicate_id ): void {
 		global $wpdb;
 
+		// Pre-collect event IDs BEFORE simple meta update changes the player ID.
+		$event_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
+				WHERE meta_key = 'sp_player' AND meta_value = %s",
+				(string) $duplicate_id
+			)
+		);
+
 		// Simple meta: exact-match update.
 		foreach ( self::SIMPLE_PLAYER_META_KEYS as $meta_key ) {
 			$wpdb->update(
@@ -344,8 +364,8 @@ class SP_Merge_Processor {
 			);
 		}
 
-		// Serialized meta: structure-aware replacement.
-		$this->update_serialized_event_meta( $primary_id, $duplicate_id );
+		// Serialized meta: structure-aware replacement using pre-collected event IDs.
+		$this->update_serialized_event_meta( $primary_id, $duplicate_id, $event_ids );
 	}
 
 	/**
@@ -355,17 +375,7 @@ class SP_Merge_Processor {
 	 * @param int $primary_id   Primary player ID.
 	 * @param int $duplicate_id Duplicate player ID.
 	 */
-	private function update_serialized_event_meta( int $primary_id, int $duplicate_id ): void {
-		global $wpdb;
-
-		$event_ids = $wpdb->get_col(
-			$wpdb->prepare(
-				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
-				WHERE meta_key = 'sp_player' AND meta_value = %s",
-				(string) $duplicate_id
-			)
-		);
-
+	private function update_serialized_event_meta( int $primary_id, int $duplicate_id, array $event_ids = array() ): void {
 		if ( empty( $event_ids ) ) {
 			return;
 		}

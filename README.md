@@ -56,8 +56,8 @@ A WordPress plugin that provides advanced player merging functionality for Sport
 
 ## Technical Details
 
-- **WordPress Version**: 5.0+
-- **PHP Version**: 7.4+
+- **WordPress Version**: 6.0+
+- **PHP Version**: 8.2+
 - **Dependencies**: SportsPress plugin
 - **Database**: Uses dedicated wp_sp_merge_backups table for backup storage
 - **Security**: Comprehensive nonce verification and capability checks
