@@ -303,17 +303,46 @@ class SP_Merge_Ajax {
 		$players = get_posts(
 			array(
 				'post_type'      => 'sp_player',
-				'posts_per_page' => -1,
+				'posts_per_page' => 2000,
 				'no_found_rows'  => true,
 				'post_status'    => 'publish',
 				'fields'         => '',
 			)
 		);
 
+		$player_ids = wp_list_pluck( $players, 'ID' );
+		if ( ! empty( $player_ids ) ) {
+			update_meta_cache( 'post', $player_ids );
+			update_object_term_cache( $player_ids, 'sp_player' );
+		}
+
 		$grouped = array();
 		foreach ( $players as $player ) {
 			$key = strtolower( trim( $player->post_title ) );
 			$grouped[ $key ][] = $player;
+		}
+
+		// Batch event count query for all duplicate player IDs.
+		$duplicate_ids = array();
+		foreach ( $grouped as $group ) {
+			if ( count( $group ) >= 2 ) {
+				foreach ( $group as $p ) {
+					$duplicate_ids[] = $p->ID;
+				}
+			}
+		}
+		$event_counts = array();
+		if ( ! empty( $duplicate_ids ) ) {
+			global $wpdb;
+			$placeholders = implode( ',', array_fill( 0, count( $duplicate_ids ), '%s' ) );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$rows = $wpdb->get_results( $wpdb->prepare(
+				"SELECT pm.meta_value AS player_id, COUNT(*) AS cnt FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE p.post_type = 'sp_event' AND pm.meta_key = 'sp_player' AND pm.meta_value IN ($placeholders) GROUP BY pm.meta_value",
+				...$duplicate_ids
+			) );
+			foreach ( $rows as $row ) {
+				$event_counts[ (int) $row->player_id ] = (int) $row->cnt;
+			}
 		}
 
 		$groups = array();
@@ -339,11 +368,7 @@ class SP_Merge_Ajax {
 					}
 				}
 				$teams[]   = $team_id;
-				global $wpdb;
-				$events    = (int) $wpdb->get_var( $wpdb->prepare(
-					"SELECT COUNT(*) FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE p.post_type = 'sp_event' AND pm.meta_key = 'sp_player' AND pm.meta_value = %s",
-					$p->ID
-				) );
+				$events    = $event_counts[ $p->ID ] ?? 0;
 				$positions  = wp_get_post_terms( $p->ID, 'sp_position', array( 'fields' => 'names' ) );
 				$position   = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
 				$details[] = array(

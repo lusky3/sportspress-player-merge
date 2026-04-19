@@ -141,6 +141,7 @@ class SP_Merge_Backup {
 
 		$backup_data = array(
 			'timestamp'         => current_time( 'mysql' ),
+			'plugin_version'    => SP_MERGE_VERSION,
 			'primary_id'        => $primary_id,
 			'primary_name'      => get_the_title( $primary_id ),
 			'duplicate_ids'     => $duplicate_ids,
@@ -391,7 +392,7 @@ class SP_Merge_Backup {
 
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT backup_data FROM {$wpdb->prefix}sp_merge_backups WHERE backup_id = %s AND user_id = %d",
+				"SELECT backup_data FROM {$wpdb->prefix}sp_merge_backups WHERE backup_id = %s AND user_id = %d AND COALESCE(status, 'active') != 'reverted'",
 				$backup_id,
 				get_current_user_id()
 			)
@@ -588,12 +589,14 @@ class SP_Merge_Backup {
 	private function cleanup_after_revert( string $backup_id ): void {
 		global $wpdb;
 
-		$wpdb->delete(
+		$wpdb->update(
 			$wpdb->prefix . 'sp_merge_backups',
+			array( 'status' => 'reverted' ),
 			array(
 				'backup_id' => $backup_id,
 				'user_id'   => get_current_user_id(),
 			),
+			array( '%s' ),
 			array( '%s', '%d' )
 		);
 

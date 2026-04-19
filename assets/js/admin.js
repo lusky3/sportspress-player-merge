@@ -162,6 +162,16 @@
 			return $temp.html();
 		},
 
+		/**
+		 * Escape HTML entities to prevent XSS.
+		 *
+		 * @param {string|number} str Value to escape.
+		 * @return {string} Escaped string safe for HTML insertion.
+		 */
+		escapeHtml: function( str ) {
+			return String( str ).replace( /&/g, '&amp;' ).replace( /</g, '&lt;' ).replace( />/g, '&gt;' ).replace( /"/g, '&quot;' ).replace( /'/g, '&#39;' );
+		},
+
 		checkForExistingBackup: function() {
 			var $revertBtn = $( '.sp-revert-backup' ).first();
 			if ( $revertBtn.length ) {
@@ -256,7 +266,10 @@
 		handleExecuteMerge: function( e ) {
 			e.preventDefault();
 			var self = this;
-			this.customConfirm( spMergeAjax.strings.confirmMerge ).then( function( confirmed ) {
+			var primaryName = $( '#primary-player option:selected' ).text() || 'selected player';
+			var dupCount = ( $( '#duplicate-players' ).val() || [] ).length;
+			var message = 'Merge ' + dupCount + ' duplicate(s) into "' + primaryName + '"? This will reassign all linked data and delete the duplicate player(s).';
+			this.customConfirm( message ).then( function( confirmed ) {
 				if ( confirmed ) {
 					self.proceedWithMerge();
 				}
@@ -356,7 +369,7 @@
 		setLoadingState: function( isLoading ) {
 			if ( isLoading ) {
 				$( '#sp-merge-loading' ).show();
-				$( 'button:not(#cancel-preview)' ).prop( 'disabled', true );
+				$( '.sp-merge-wrap button:not(#cancel-preview)' ).prop( 'disabled', true );
 				$( '.sp-revert-backup, .sp-delete-backup' ).prop( 'disabled', true );
 			} else {
 				$( '#sp-merge-loading' ).hide();
@@ -582,11 +595,11 @@
 				for ( var j = 0; j < sorted.length; j++ ) {
 					var p = sorted[j];
 					var meta = [];
-					if ( p.team ) { meta.push( p.team ); }
-					if ( p.position ) { meta.push( p.position ); }
-					var metaStr = meta.length ? ' (' + meta.join( ' · ' ) + ')' : '';
-					playerList += '<li><a href="' + p.edit_link + '">' + p.name + ' #' + p.id + '</a>' + metaStr
-						+ ' <small>' + p.events + ' events</small></li>';
+					if ( p.team ) { meta.push( this.escapeHtml( p.team ) ); }
+					if ( p.position ) { meta.push( this.escapeHtml( p.position ) ); }
+					var metaStr = meta.length ? ' (' + meta.join( ' &middot; ' ) + ')' : '';
+					playerList += '<li><a href="' + this.escapeHtml( p.edit_link ) + '">' + this.escapeHtml( p.name ) + ' #' + this.escapeHtml( p.id ) + '</a>' + metaStr
+						+ ' <small>' + this.escapeHtml( p.events ) + ' events</small></li>';
 				}
 				playerList += '</ul>';
 
@@ -597,9 +610,9 @@
 
 				html += '<tr>'
 					+ '<td>' + playerList + '</td>'
-					+ '<td style="text-align:center">' + sorted.reduce( function( s, p ) { return s + p.events; }, 0 ) + '</td>'
-					+ '<td style="text-align:center"><span class="sp-certainty-badge ' + badgeClass + '">' + g.certainty + '% &mdash; ' + certaintyLabel( g.certainty ) + '</span></td>'
-					+ '<td style="text-align:center"><button type="button" class="button button-small sp-select-duplicates" data-players=\'' + playersJson.replace( /'/g, '&#39;' ) + '\'>Select for Merge</button></td>'
+					+ '<td style="text-align:center">' + this.escapeHtml( sorted.reduce( function( s, p ) { return s + p.events; }, 0 ) ) + '</td>'
+					+ '<td style="text-align:center"><span class="sp-certainty-badge ' + badgeClass + '">' + this.escapeHtml( g.certainty ) + '% &mdash; ' + certaintyLabel( g.certainty ) + '</span></td>'
+					+ '<td style="text-align:center"><button type="button" class="button button-small sp-select-duplicates" data-players="' + this.escapeHtml( playersJson ) + '">Select for Merge</button></td>'
 					+ '</tr>';
 			}
 

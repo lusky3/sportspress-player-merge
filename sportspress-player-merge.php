@@ -3,7 +3,7 @@
  * Plugin Name: SportsPress Player Merge
  * Plugin URI: https://github.com/lusky3/sportspress-player-merge
  * Description: Advanced tool to merge duplicate SportsPress players with data preservation and revert functionality
- * Version: 0.4.0
+ * Version: 1.0.0
  * Author: Cody (lusky3)
  * Author URI: https://github.com/lusky3
  * License: GPL v2 or later
@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'SP_MERGE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'SP_MERGE_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'SP_MERGE_PLUGIN_FILE', __FILE__ );
-define( 'SP_MERGE_VERSION', '0.4.0' );
+define( 'SP_MERGE_VERSION', '1.0.0' );
 define( 'SP_MERGE_BACKUP_RETENTION_DAYS', 30 );
 
 /**
@@ -70,6 +70,7 @@ class SportsPress_Player_Merge_Init {
 			user_id bigint(20) NOT NULL,
 			backup_data longtext NOT NULL,
 			created_at datetime NOT NULL,
+			status varchar(20) NOT NULL DEFAULT 'active',
 			PRIMARY KEY (id),
 			KEY backup_id (backup_id),
 			KEY user_id (user_id),

@@ -50,14 +50,14 @@ class SP_Merge_Admin {
 		// Select2 for AJAX-powered player search.
 		wp_enqueue_style(
 			'sp-merge-select2-css',
-			'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css',
+			SP_MERGE_PLUGIN_URL . 'assets/vendor/select2/select2.min.css',
 			array(),
 			'4.1.0-rc.0'
 		);
 
 		wp_enqueue_script(
 			'sp-merge-select2-js',
-			'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js',
+			SP_MERGE_PLUGIN_URL . 'assets/vendor/select2/select2.min.js',
 			array( 'jquery' ),
 			'4.1.0-rc.0',
 			true

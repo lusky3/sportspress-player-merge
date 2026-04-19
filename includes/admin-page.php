@@ -155,7 +155,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 		</div>
 
 		<!-- Status Messages -->
-		<div id="sp-merge-messages" class="sp-merge-messages"></div>
+		<div id="sp-merge-messages" class="sp-merge-messages" aria-live="polite"></div>
 
 		<!-- Help Section -->
 		<div class="sp-merge-card">

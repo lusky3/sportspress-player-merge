@@ -1,0 +1,444 @@
+# Copyright (C) 2026 Cody (lusky3)
+# This file is distributed under the GPL v2 or later.
+msgid ""
+msgstr ""
+"Project-Id-Version: SportsPress Player Merge 0.4.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/sportspress-player-merge\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-04-19T03:07:26+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.12.0\n"
+"X-Domain: sportspress-player-merge\n"
+
+#. Plugin Name of the plugin
+#: sportspress-player-merge.php
+msgid "SportsPress Player Merge"
+msgstr ""
+
+#. Plugin URI of the plugin
+#: sportspress-player-merge.php
+msgid "https://github.com/lusky3/sportspress-player-merge"
+msgstr ""
+
+#. Description of the plugin
+#: sportspress-player-merge.php
+msgid "Advanced tool to merge duplicate SportsPress players with data preservation and revert functionality"
+msgstr ""
+
+#. Author of the plugin
+#: sportspress-player-merge.php
+msgid "Cody (lusky3)"
+msgstr ""
+
+#. Author URI of the plugin
+#: sportspress-player-merge.php
+msgid "https://github.com/lusky3"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:25
+msgid "Player Merge Tool"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:26
+msgid "Player Merge"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:90
+msgid "You do not have sufficient permissions to access this page."
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:99
+msgid "Error: Admin page template not found."
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:180
+msgid "Unknown"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:195
+msgid "Are you sure you want to merge these players?"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:196
+msgid "Are you sure you want to revert the last merge?"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:197
+msgid "Please select a primary player and at least one duplicate."
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:198
+msgid "Players merged successfully!"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:199
+msgid "Merge reverted successfully!"
+msgstr ""
+
+#: classes/class-sp-merge-admin.php:200
+msgid "No recent merge data found to revert."
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:37
+msgid "Preview generation failed"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:61
+msgid "Merge completed successfully"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:66
+msgid "Merge failed"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:69
+msgid "Merge operation failed"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:91
+msgid "Merge reverted successfully"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:93
+msgid "Revert failed"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:96
+msgid "Revert operation failed"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:110
+msgid "Invalid backup IDs format"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:116
+msgid "No backup IDs provided"
+msgstr ""
+
+#. translators: %d: number of backups deleted
+#: classes/class-sp-merge-ajax.php:127
+#, php-format
+msgid "%d backup(s) deleted successfully"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:133
+msgid "Delete operation failed"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:150
+msgid "Failed to retrieve backup data"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:165
+#: includes/admin-page.php:127
+msgid "Revert"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:168
+#: includes/admin-page.php:130
+msgid "Delete"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:178
+msgid "Failed to load backups"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:192
+msgid "Invalid input format"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:200
+msgid "Invalid player selection"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:206
+msgid "Maximum 10 duplicate players per merge operation."
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:212
+msgid "Primary player cannot also be a duplicate"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:218
+msgid "Primary player not found or not published"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:225
+msgid "One or more duplicate players not found or not published"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:249
+msgid "No backup data found to revert"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:282
+#: classes/class-sp-merge-ajax.php:395
+msgid "Insufficient permissions"
+msgstr ""
+
+#: classes/class-sp-merge-ajax.php:288
+#: classes/class-sp-merge-ajax.php:401
+msgid "Security check failed"
+msgstr ""
+
+#: classes/class-sp-merge-backup.php:32
+msgid "Failed to prepare backup data"
+msgstr ""
+
+#: classes/class-sp-merge-backup.php:53
+msgid "Backup data not found"
+msgstr ""
+
+#: classes/class-sp-merge-backup.php:79
+msgid "Revert failed. Please check the error log for details."
+msgstr ""
+
+#: classes/class-sp-merge-backup.php:358
+msgid "Failed to encode backup data"
+msgstr ""
+
+#: classes/class-sp-merge-backup.php:373
+msgid "Failed to save backup to database"
+msgstr ""
+
+#. translators: %d: player ID
+#: classes/class-sp-merge-backup.php:524
+#, php-format
+msgid "Failed to recreate player %d"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:52
+msgid "Players Being Merged"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:53
+msgid "Primary Player (will be kept):"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:54
+msgid "Duplicate Players (will be deleted):"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:74
+msgid "Data Merge Preview"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:78
+msgid "Data Type"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:79
+msgid "Current (Primary)"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:80
+msgid "Incoming (Duplicates)"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:81
+msgid "Result After Merge"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:147
+msgid "Warning:"
+msgstr ""
+
+#. translators: %d: number of shared events
+#: classes/class-sp-merge-preview.php:150
+#, php-format
+msgid "%d event(s) contain both the primary and duplicate player(s). Performance stats in those events will be combined (numeric values summed). Timeline entries will be merged. Please verify the result after merging."
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:179
+#: classes/class-sp-merge-preview.php:271
+#: classes/class-sp-merge-preview.php:368
+msgid "None"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:182
+msgid "Current Team"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:208
+msgid "Past Team(s)"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:274
+msgid "Events"
+msgstr ""
+
+#: classes/class-sp-merge-preview.php:293
+msgid "Unknown Player"
+msgstr ""
+
+#. translators: %d: number of hidden items
+#: classes/class-sp-merge-preview.php:384
+#, php-format
+msgid "%d more"
+msgstr ""
+
+#: classes/class-sp-merge-processor.php:63
+msgid "Another merge is in progress. Please wait and try again."
+msgstr ""
+
+#: classes/class-sp-merge-processor.php:73
+msgid "Failed to create backup before merge"
+msgstr ""
+
+#. translators: %d: player ID
+#: classes/class-sp-merge-processor.php:92
+#, php-format
+msgid "Failed to delete duplicate player %d"
+msgstr ""
+
+#: classes/class-sp-merge-processor.php:121
+msgid "Merge failed. Please check the error log for details."
+msgstr ""
+
+#: includes/admin-page.php:20
+msgid "SportsPress Player Merge Tool"
+msgstr ""
+
+#: includes/admin-page.php:23
+msgid "Merge duplicate players while preserving all data. Changes can be reverted if needed."
+msgstr ""
+
+#: includes/admin-page.php:33
+msgid "Select Players to Merge"
+msgstr ""
+
+#: includes/admin-page.php:44
+msgid "Primary Player (will be kept)"
+msgstr ""
+
+#: includes/admin-page.php:46
+msgid "Search for the player to keep..."
+msgstr ""
+
+#: includes/admin-page.php:49
+msgid "This player will retain all data and remain in the system."
+msgstr ""
+
+#: includes/admin-page.php:56
+msgid "Duplicate Players (will be merged and deleted)"
+msgstr ""
+
+#: includes/admin-page.php:58
+msgid "Search for duplicate players..."
+msgstr ""
+
+#: includes/admin-page.php:62
+msgid "Type to search. Select up to 10 duplicate players."
+msgstr ""
+
+#: includes/admin-page.php:70
+msgid "Preview Merge"
+msgstr ""
+
+#: includes/admin-page.php:74
+msgid "Execute Merge"
+msgstr ""
+
+#: includes/admin-page.php:78
+msgid "Revert Last Merge"
+msgstr ""
+
+#: includes/admin-page.php:90
+msgid "Merge Preview"
+msgstr ""
+
+#: includes/admin-page.php:94
+msgid "Cancel Preview"
+msgstr ""
+
+#: includes/admin-page.php:108
+msgid "Recent Merges (Available for Revert)"
+msgstr ""
+
+#: includes/admin-page.php:111
+msgid "Select All"
+msgstr ""
+
+#: includes/admin-page.php:113
+msgid "Delete Selected"
+msgstr ""
+
+#: includes/admin-page.php:144
+msgid "Possible Duplicates"
+msgstr ""
+
+#: includes/admin-page.php:147
+msgid "Scan for Duplicates"
+msgstr ""
+
+#: includes/admin-page.php:152
+msgid "Click 'Scan for Duplicates' to find players with matching names."
+msgstr ""
+
+#: includes/admin-page.php:165
+msgid "How to Use This Tool"
+msgstr ""
+
+#: includes/admin-page.php:170
+msgid "Select Primary Player:"
+msgstr ""
+
+#: includes/admin-page.php:170
+msgid "Choose the player you want to keep. This player will retain all existing data."
+msgstr ""
+
+#: includes/admin-page.php:171
+msgid "Select Duplicates:"
+msgstr ""
+
+#: includes/admin-page.php:171
+msgid "Choose one or more duplicate players to merge into the primary player."
+msgstr ""
+
+#: includes/admin-page.php:172
+msgid "Preview:"
+msgstr ""
+
+#: includes/admin-page.php:172
+msgid "Click \"Preview Merge\" to see what data will be combined."
+msgstr ""
+
+#: includes/admin-page.php:173
+msgid "Execute:"
+msgstr ""
+
+#: includes/admin-page.php:173
+msgid "Click \"Execute Merge\" to perform the merge operation."
+msgstr ""
+
+#: includes/admin-page.php:174
+msgid "Revert:"
+msgstr ""
+
+#: includes/admin-page.php:174
+msgid "If needed, you can revert the last merge operation to restore deleted players."
+msgstr ""
+
+#: includes/admin-page.php:178
+msgid "Important:"
+msgstr ""
+
+#: includes/admin-page.php:178
+msgid "Always preview your merge before executing. While merges can be reverted, it is always recommended to take a full database backup before performing any data manipulation operations."
+msgstr ""
+
+#: includes/admin-page.php:182
+msgid "SportsPress Player Merge (SP Merge) is not affiliated with or endorsed by the creators of SportsPress."
+msgstr ""
+
+#: includes/admin-page.php:193
+msgid "Processing merge operation..."
+msgstr ""
+
+#: sportspress-player-merge.php:49
+msgid "SportsPress Player Merge requires SportsPress plugin to be installed and activated."
+msgstr ""
