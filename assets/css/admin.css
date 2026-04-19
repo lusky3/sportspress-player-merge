@@ -557,3 +557,89 @@ button[disabled][title]:hover::before {
 	border-color: #2271b1;
 	box-shadow: 0 0 0 1px #2271b1;
 }
+
+/* Possible Duplicates */
+.sp-duplicates-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+}
+
+.sp-duplicates-table th,
+.sp-duplicates-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f0f1;
+    vertical-align: middle;
+}
+
+.sp-duplicates-table th:not(:first-child),
+.sp-duplicates-table td:not(:first-child) {
+    text-align: center;
+}
+
+.sp-duplicates-table th {
+    background: #f6f7f7;
+    font-weight: 600;
+    color: #1d2327;
+    border-bottom: 1px solid #ccd0d4;
+}
+
+.sp-certainty-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sp-certainty-high {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.sp-certainty-medium {
+    background: #fff3cd;
+    color: #664d03;
+}
+
+.sp-certainty-low {
+    background: #e9ecef;
+    color: #495057;
+}
+
+.sp-duplicate-group {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.sp-duplicate-group li {
+    padding: 2px 0;
+}
+
+.sp-duplicate-group li a {
+    text-decoration: none;
+    color: #2271b1;
+}
+
+.sp-duplicate-group li a:hover {
+    text-decoration: underline;
+}
+
+/* Draggable cards */
+.sp-merge-card[draggable="true"] .sp-merge-card-header {
+    cursor: grab;
+}
+
+.sp-merge-card[draggable="true"] .sp-merge-card-header:active {
+    cursor: grabbing;
+}
+
+.sp-merge-card.sp-dragging {
+    opacity: 0.4;
+}
+
+.sp-merge-card.sp-drag-over {
+    border-top: 3px solid #2271b1;
+}

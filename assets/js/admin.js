@@ -80,6 +80,7 @@
 			this.initSelect2();
 			this.bindEvents();
 			this.checkForExistingBackup();
+			this.initDraggableCards();
 		},
 
 		/**
@@ -135,6 +136,8 @@
 			$( '#delete-selected-backups' ).on( 'click', this.handleDeleteSelectedBackups.bind( this ) );
 			$( document ).on( 'change', '.backup-checkbox', this.updateDeleteButtonState.bind( this ) );
 			$( '#primary-player, #duplicate-players' ).on( 'change', this.validateForm.bind( this ) );
+			$( '#scan-duplicates' ).on( 'click', this.handleScanDuplicates.bind( this ) );
+			$( document ).on( 'click', '.sp-select-duplicates', this.handleSelectDuplicates.bind( this ) );
 			$( document ).on( 'click', '.sp-expand-toggle', this.handleExpandToggle.bind( this ) );
 		},
 
@@ -530,6 +533,190 @@
 				+ '<div class="sp-merge-card-body">' + this.sanitizeHtml( backupHtml ) + '</div></div>';
 
 			$( '#sp-merge-messages' ).before( section );
+		},
+
+		handleScanDuplicates: function( e ) {
+			e.preventDefault();
+			this.setLoadingState( true );
+
+			var self = this;
+			$.post( spMergeAjax.ajaxUrl, {
+				action: 'sp_find_duplicates',
+				nonce: spMergeAjax.nonce
+			} )
+				.done( function( response ) {
+					if ( response.success ) {
+						self.renderDuplicates( response.data.groups );
+					} else {
+						self.showMessage( 'error', ( response.data && response.data.message ) || 'Scan failed.' );
+					}
+				} )
+				.fail( this.handleAjaxError.bind( this ) )
+				.always( this.setLoadingState.bind( this, false ) );
+		},
+
+		renderDuplicates: function( groups ) {
+			var $content = $( '#duplicates-content' );
+
+			if ( ! groups || ! groups.length ) {
+				$content.html( '<p>No duplicate players found.</p>' );
+				return;
+			}
+
+			var certaintyLabel = function( c ) {
+				return c >= 90 ? 'High' : ( c >= 70 ? 'Medium' : 'Low' );
+			};
+
+			var html = '<table class="sp-duplicates-table">'
+				+ '<caption class="screen-reader-text">Possible duplicate player groups with certainty scores</caption>'
+				+ '<thead><tr><th>Players</th><th style="text-align:center">Events</th><th style="text-align:center">Certainty</th><th style="text-align:center">Action</th></tr></thead><tbody>';
+
+			for ( var i = 0; i < groups.length; i++ ) {
+				var g = groups[i];
+				var badgeClass = g.certainty >= 90 ? 'sp-certainty-high' : ( g.certainty >= 70 ? 'sp-certainty-medium' : 'sp-certainty-low' );
+
+				// Sort players by events descending so best primary is first.
+				var sorted = g.players.slice().sort( function( a, b ) { return b.events - a.events; } );
+
+				var playerList = '<ul class="sp-duplicate-group">';
+				for ( var j = 0; j < sorted.length; j++ ) {
+					var p = sorted[j];
+					var meta = [];
+					if ( p.team ) { meta.push( p.team ); }
+					if ( p.position ) { meta.push( p.position ); }
+					var metaStr = meta.length ? ' (' + meta.join( ' · ' ) + ')' : '';
+					playerList += '<li><a href="' + p.edit_link + '">' + p.name + ' #' + p.id + '</a>' + metaStr
+						+ ' <small>' + p.events + ' events</small></li>';
+				}
+				playerList += '</ul>';
+
+				// Encode full player data for Select button.
+				var playersJson = JSON.stringify( sorted.map( function( p ) {
+					return { id: p.id, name: p.name, team: p.team || '', position: p.position || '', events: p.events };
+				} ) );
+
+				html += '<tr>'
+					+ '<td>' + playerList + '</td>'
+					+ '<td style="text-align:center">' + sorted.reduce( function( s, p ) { return s + p.events; }, 0 ) + '</td>'
+					+ '<td style="text-align:center"><span class="sp-certainty-badge ' + badgeClass + '">' + g.certainty + '% &mdash; ' + certaintyLabel( g.certainty ) + '</span></td>'
+					+ '<td style="text-align:center"><button type="button" class="button button-small sp-select-duplicates" data-players=\'' + playersJson.replace( /'/g, '&#39;' ) + '\'>Select for Merge</button></td>'
+					+ '</tr>';
+			}
+
+			html += '</tbody></table>';
+			if ( groups.length >= 50 ) {
+				html += '<p class="description" style="margin-top:8px;">Showing first 50 groups. Merge some duplicates and scan again to find more.</p>';
+			}
+			$content.html( html );
+		},
+
+		handleSelectDuplicates: function( e ) {
+			e.preventDefault();
+			var players = JSON.parse( $( e.target ).closest( '.sp-select-duplicates' ).attr( 'data-players' ) );
+
+			// Players are already sorted by events descending; first = best primary.
+			var primary = players[0];
+			var duplicates = players.slice( 1 );
+
+			var buildLabel = function( p ) {
+				var parts = [ p.name + ' #' + p.id ];
+				var meta = [];
+				if ( p.team ) { meta.push( p.team ); }
+				if ( p.position ) { meta.push( p.position ); }
+				if ( meta.length ) { parts.push( '(' + meta.join( ' · ' ) + ')' ); }
+				parts.push( '— ' + p.events + ' events' );
+				return parts.join( ' ' );
+			};
+
+			// Set primary player in Select2.
+			var $primary = $( '#primary-player' );
+			var primaryOption = new Option( buildLabel( primary ), primary.id, true, true );
+			$primary.append( primaryOption ).trigger( 'change' );
+
+			// Set duplicate players in Select2.
+			var $duplicates = $( '#duplicate-players' );
+			$duplicates.val( null ).trigger( 'change' );
+			for ( var i = 0; i < duplicates.length; i++ ) {
+				var dupOption = new Option( buildLabel( duplicates[i] ), duplicates[i].id, true, true );
+				$duplicates.append( dupOption ).trigger( 'change' );
+			}
+
+			$( 'html, body' ).animate( {
+				scrollTop: $( '#sp-merge-form' ).offset().top - 50
+			}, 500 );
+		},
+
+		initDraggableCards: function() {
+			var container = document.querySelector( '.sp-merge-container' );
+			if ( ! container ) { return; }
+
+			// Restore saved order from localStorage.
+			try {
+				var saved = JSON.parse( localStorage.getItem( 'sp_merge_card_order' ) || '[]' );
+				if ( saved.length ) {
+					var cards = Array.from( container.querySelectorAll( '.sp-merge-card' ) );
+					var map = {};
+					cards.forEach( function( c, i ) {
+						var id = c.querySelector( '.sp-merge-card-header h2' );
+						map[ id ? id.textContent.trim() : i ] = c;
+					} );
+					saved.forEach( function( key ) {
+						if ( map[ key ] ) { container.appendChild( map[ key ] ); }
+					} );
+				}
+			} catch ( e ) { /* ignore */ }
+
+			// Set up drag events on card headers.
+			var dragSrc = null;
+			container.querySelectorAll( '.sp-merge-card' ).forEach( function( card ) {
+				card.setAttribute( 'draggable', 'true' );
+
+				card.addEventListener( 'dragstart', function( e ) {
+					dragSrc = card;
+					card.classList.add( 'sp-dragging' );
+					e.dataTransfer.effectAllowed = 'move';
+				} );
+
+				card.addEventListener( 'dragover', function( e ) {
+					e.preventDefault();
+					e.dataTransfer.dropEffect = 'move';
+					card.classList.add( 'sp-drag-over' );
+				} );
+
+				card.addEventListener( 'dragleave', function() {
+					card.classList.remove( 'sp-drag-over' );
+				} );
+
+				card.addEventListener( 'drop', function( e ) {
+					e.preventDefault();
+					card.classList.remove( 'sp-drag-over' );
+					if ( dragSrc && dragSrc !== card ) {
+						var all = Array.from( container.querySelectorAll( '.sp-merge-card' ) );
+						var from = all.indexOf( dragSrc );
+						var to = all.indexOf( card );
+						if ( from < to ) {
+							container.insertBefore( dragSrc, card.nextSibling );
+						} else {
+							container.insertBefore( dragSrc, card );
+						}
+						// Save order.
+						try {
+							var order = Array.from( container.querySelectorAll( '.sp-merge-card' ) ).map( function( c ) {
+								var h = c.querySelector( '.sp-merge-card-header h2' );
+								return h ? h.textContent.trim() : '';
+							} );
+							localStorage.setItem( 'sp_merge_card_order', JSON.stringify( order ) );
+						} catch ( ex ) { /* ignore */ }
+					}
+				} );
+
+				card.addEventListener( 'dragend', function() {
+					card.classList.remove( 'sp-dragging' );
+					container.querySelectorAll( '.sp-drag-over' ).forEach( function( c ) {
+						c.classList.remove( 'sp-drag-over' );
+					} );
+				} );
+			} );
 		},
 
 		updateBackupButtonStates: function() {
