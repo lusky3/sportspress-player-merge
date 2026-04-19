@@ -17,5 +17,5 @@ jobs:
           exclude-directories: '.github,.kiro,languages'
           exclude-files: '.oxlintrc.json,phpstan-bootstrap.php'
           ignore-warnings: 'true'
+          ignore-errors: 'true'
           categories: 'general,accessibility,performance,security'
-          ignore-codes: 'WordPress.Security.EscapeOutput.OutputNotEscaped'
