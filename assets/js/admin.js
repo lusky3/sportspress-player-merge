@@ -597,6 +597,7 @@
 					var meta = [];
 					if ( p.team ) { meta.push( this.escapeHtml( p.team ) ); }
 					if ( p.position ) { meta.push( this.escapeHtml( p.position ) ); }
+					if ( p.email ) { meta.push( this.escapeHtml( p.email ) ); }
 					var metaStr = meta.length ? ' (' + meta.join( ' &middot; ' ) + ')' : '';
 					playerList += '<li><a href="' + this.escapeHtml( p.edit_link ) + '">' + this.escapeHtml( p.name ) + ' #' + this.escapeHtml( p.id ) + '</a>' + metaStr
 						+ ' <small>' + this.escapeHtml( p.events ) + ' events</small></li>';
@@ -605,7 +606,7 @@
 
 				// Encode full player data for Select button.
 				var playersJson = JSON.stringify( sorted.map( function( p ) {
-					return { id: p.id, name: p.name, team: p.team || '', position: p.position || '', events: p.events };
+					return { id: p.id, name: p.name, team: p.team || '', position: p.position || '', events: p.events, email: p.email || '' };
 				} ) );
 
 				html += '<tr>'
