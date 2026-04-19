@@ -368,11 +368,18 @@ class SP_Merge_Ajax {
 					'team'      => $team,
 					'position'  => $position,
 					'events'    => $events,
+					'email'     => get_post_meta( $p->ID, 'spt_email', true ) ?: '',
 					'edit_link' => get_edit_post_link( $p->ID, 'raw' ),
 				);
 			}
 
 			$certainty = $mg['certainty'];
+
+			// Boost certainty when players share the same email address.
+			$emails = array_filter( array_column( $details, 'email' ), 'strlen' );
+			if ( count( $emails ) >= 2 && count( array_unique( $emails ) ) === 1 ) {
+				$certainty = min( 100, $certainty + 20 );
+			}
 
 			// Boost certainty when all players share the same team.
 			$team_ids = array_filter( $teams );

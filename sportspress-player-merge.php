@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'SP_MERGE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'SP_MERGE_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'SP_MERGE_PLUGIN_FILE', __FILE__ );
-define( 'SP_MERGE_VERSION', '1.0.0' );
+define( 'SP_MERGE_VERSION', '1.1.0' );
 define( 'SP_MERGE_BACKUP_RETENTION_DAYS', 30 );
 
 /**
