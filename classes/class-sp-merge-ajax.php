@@ -101,7 +101,7 @@ class SP_Merge_Ajax {
 	 * Handle delete backup request.
 	 */
 	public function delete_backup(): void {
-		if ( ! $this->validate_write_request() ) {
+		if ( ! $this->validate_admin_request() ) {
 			return;
 		}
 
@@ -263,11 +263,30 @@ class SP_Merge_Ajax {
 	}
 
 	/**
-	 * Validate nonce and write-level capabilities (delete/revert).
+	 * Validate nonce and merge-level capabilities (execute/revert).
+	 * League Managers (manage_sportspress) and Administrators (delete_sp_players) can merge.
 	 *
 	 * @return bool
 	 */
 	private function validate_write_request(): bool {
+		if ( current_user_can( 'manage_sportspress' ) || current_user_can( 'delete_sp_players' ) ) {
+			$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+			if ( ! wp_verify_nonce( $nonce, 'sp_merge_nonce' ) ) {
+				$this->send_error( __( 'Security check failed', 'sportspress-player-merge' ) );
+				return false;
+			}
+			return true;
+		}
+		$this->send_error( __( 'Insufficient permissions', 'sportspress-player-merge' ) );
+		return false;
+	}
+
+	/**
+	 * Validate nonce and admin-level capabilities (delete backup).
+	 *
+	 * @return bool
+	 */
+	private function validate_admin_request(): bool {
 		return $this->check_request( 'delete_sp_players' );
 	}
 
