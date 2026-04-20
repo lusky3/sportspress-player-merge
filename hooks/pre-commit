@@ -1,27 +1,36 @@
 #!/bin/sh
 # Pre-commit hook for WordPress plugin repos
-# Checks staged PHP files for common issues including AI/LLM pitfalls
+# Checks staged files for secrets, syntax errors, debug code, and AI hallucinations
 
 STAGED=$(git diff --cached --name-only --diff-filter=ACM)
 STAGED_PHP=$(echo "$STAGED" | grep '\.php$' || true)
 
-# Exit early if no relevant files staged
 [ -z "$STAGED" ] && exit 0
 
-# 1. Merge conflict markers (all files)
+# 1. Merge conflict markers
 if echo "$STAGED" | xargs grep -lE '^(<{7}|={7}|>{7})' 2>/dev/null; then
   echo "❌ Merge conflict markers found in staged files"
   exit 1
 fi
 
-# 2. Secrets detection (all files)
-SECRETS_PATTERN='(AKIA[0-9A-Z]{16}|sk_live_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36}|glpat-[0-9a-zA-Z\-_]{20,}|xox[baprs]-[0-9a-zA-Z\-]{10,}|-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----|sk-[0-9a-zA-Z]{20,}|SNYK_TOKEN|SONAR_TOKEN|GITGUARDIAN_API_KEY)'
-MATCHES=$(echo "$STAGED" | xargs grep -lE "$SECRETS_PATTERN" 2>/dev/null | grep -v '\.sample$' | grep -v 'SECURITY\.md' || true)
-if [ -n "$MATCHES" ]; then
-  echo "❌ Possible secrets/API keys detected:"
-  echo "$MATCHES"
-  echo "   If intentional (e.g. documentation), use: git commit --no-verify"
-  exit 1
+# 2. Secret scanning via gitleaks
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --no-banner
+  if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Secrets detected by gitleaks. Remove them before committing."
+    echo "   To skip (NOT recommended): git commit --no-verify"
+    exit 1
+  fi
+else
+  # Fallback: basic regex patterns if gitleaks not installed
+  SECRETS_PATTERN='(AKIA[0-9A-Z]{16}|sk_live_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36}|glpat-[0-9a-zA-Z\-_]{20,}|xox[baprs]-[0-9a-zA-Z\-]{10,}|-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----|sk-[0-9a-zA-Z]{20,})'
+  MATCHES=$(echo "$STAGED" | xargs grep -lE "$SECRETS_PATTERN" 2>/dev/null | grep -v '\.sample$' | grep -v 'SECURITY\.md' || true)
+  if [ -n "$MATCHES" ]; then
+    echo "❌ Possible secrets detected (install gitleaks for better detection):"
+    echo "$MATCHES"
+    exit 1
+  fi
 fi
 
 [ -z "$STAGED_PHP" ] && exit 0
@@ -38,27 +47,22 @@ echo "$STAGED_PHP" | while IFS= read -r file; do
 done || exit 1
 
 # 4. Debug statements
-DEBUG_MATCHES=$(echo "$STAGED_PHP" | xargs grep -nE '\b(var_dump|print_r|error_log|var_export)\s*\(' 2>/dev/null | grep -v '//.*\b(var_dump|print_r|error_log|var_export)' || true)
+DEBUG_MATCHES=$(echo "$STAGED_PHP" | xargs grep -nE '\b(var_dump|print_r|error_log|var_export)\s*\(' 2>/dev/null || true)
 if [ -n "$DEBUG_MATCHES" ]; then
   echo "❌ Debug statements found in staged files:"
   echo "$DEBUG_MATCHES"
   exit 1
 fi
 
-# 5. Hallucinated PHP classes — verify use statements resolve
+# 5. Hallucinated PHP classes (advisory)
 echo "$STAGED_PHP" | while IFS= read -r file; do
   [ -z "$file" ] && continue
-  # Extract non-WordPress, non-global use statements
   USES=$(grep -oP '^use\s+\K[A-Z][A-Za-z0-9\\]+(?=;)' "$file" 2>/dev/null | grep -v '^WP_' | grep -v '^wpdb' || true)
   for class in $USES; do
-    # Convert namespace to path pattern
-    CLASS_FILE=$(echo "$class" | sed 's/\\/\//g')
-    BASE=$(basename "$CLASS_FILE")
-    # Check if it resolves to a file in the project or vendor
-    if ! find . -path "./vendor" -prune -o -name "*.php" -print 2>/dev/null | xargs grep -l "class $BASE\b" >/dev/null 2>&1; then
-      if [ -d vendor ] && ! find vendor -name "*.php" -print 2>/dev/null | xargs grep -l "class $BASE\b" >/dev/null 2>&1; then
+    BASE=$(echo "$class" | sed 's/.*\\//')
+    if ! grep -rql "class $BASE\b" --include='*.php' . 2>/dev/null; then
+      if [ -d vendor ] && ! grep -rql "class $BASE\b" --include='*.php' vendor/ 2>/dev/null; then
         echo "⚠️  Possibly hallucinated class '$class' in $file"
-        echo "   Could not find class definition. Verify it exists."
       fi
     fi
   done
