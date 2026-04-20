@@ -1,21 +1,28 @@
-name: Plugin Check
+name: WordPress Plugin Check
 
 on:
   push:
     branches: [main]
+    paths:
+      - '**.php'
+      - 'assets/**'
+      - 'readme.txt'
   pull_request:
     branches: [main]
+    paths:
+      - '**.php'
+      - 'assets/**'
+      - 'readme.txt'
+
+permissions:
+  contents: read
 
 jobs:
   plugin-check:
-    name: WordPress Plugin Check
+    name: Plugin Check
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
+
       - uses: wordpress/plugin-check-action@v1
-        with:
-          exclude-directories: '.github,.kiro,languages'
-          exclude-files: '.oxlintrc.json,phpstan-bootstrap.php'
-          ignore-warnings: 'true'
-          ignore-errors: 'true'
-          categories: 'general,accessibility,performance,security'

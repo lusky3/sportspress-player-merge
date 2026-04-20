@@ -53,6 +53,15 @@ The scanner identifies potential duplicates using 14 matching scenarios:
 
 Scoring adjustments: +5% same team, -20% different positions, +20% matching email.
 
+## Permissions
+
+| Action | Capability | Minimum Role |
+|--------|-----------|--------------|
+| View merge tool / scan / preview | `edit_sp_players` | Editor |
+| Execute merge / revert / delete backup | `delete_sp_players` | Administrator |
+
+Editors can browse and preview potential merges. Only Administrators can execute or revert them.
+
 ## File Structure
 
 ```text
