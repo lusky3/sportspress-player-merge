@@ -1,25 +1,59 @@
-name: Security
+name: Security Scanning
 
 on:
   push:
     branches: [main]
+    paths:
+      - '**.php'
+      - 'composer.*'
   pull_request:
     branches: [main]
+    paths:
+      - '**.php'
+      - 'composer.*'
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
 
 jobs:
-  phpstan:
-    name: PHPStan (Level 5)
+  gitleaks:
+    name: Gitleaks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
-          coverage: none
-          tools: phpstan
-      - name: Install WordPress stubs
-        run: |
-          composer global config --no-plugins allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
-          composer global require php-stubs/wordpress-stubs szepeviktor/phpstan-wordpress --no-interaction
-      - name: Run PHPStan
-        run: phpstan analyse --configuration=phpstan.neon --no-progress
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  snyk:
+    name: Snyk Code
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SNYK_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: snyk/actions@v1
+        with:
+          command: code test
+          args: --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SONAR_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: SonarSource/sonarqube-scan-action@v7
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

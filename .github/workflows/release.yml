@@ -2,44 +2,66 @@ name: Release
 
 on:
   push:
-    tags: ['v*.*.*']
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
-  validate-and-release:
-    name: Validate & Release
+  release:
+    name: Build & Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
-          coverage: none
-
-      - name: PHP syntax check
-        run: find . -name '*.php' -not -path './vendor/*' | xargs -n1 php -l
+          php-version: '8.4'
 
       - name: Validate version consistency
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          HEADER=$(grep -m1 "Version:" sportspress-player-merge.php | sed 's/.*Version:\s*//' | tr -d ' \r')
-          CONSTANT=$(grep "SP_MERGE_VERSION" sportspress-player-merge.php | grep -oP "'[^']+'" | tr -d "'")
-          README=$(grep "Stable tag:" readme.txt | sed 's/.*Stable tag:\s*//' | tr -d ' \r')
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PLUGIN_FILE=$(find . -maxdepth 1 -name '*.php' -exec grep -l 'Plugin Name:' {} \; | head -1)
+          if [ -z "$PLUGIN_FILE" ]; then
+            echo "::error::No main plugin file found"
+            exit 1
+          fi
+          FILE_VERSION=$(grep -oP 'Version:\s*\K[0-9.]+' "$PLUGIN_FILE")
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match plugin version ($FILE_VERSION)"
+            exit 1
+          fi
+          echo "Version $TAG_VERSION validated"
 
-          echo "Tag: $TAG"
-          echo "Header: $HEADER"
-          echo "Constant: $CONSTANT"
-          echo "Readme: $README"
+      - name: Install composer dependencies
+        run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader 2>/dev/null || true
 
-          FAIL=0
-          if [ "$TAG" != "$HEADER" ]; then echo "::error::Plugin header version ($HEADER) != tag ($TAG)"; FAIL=1; fi
-          if [ "$TAG" != "$CONSTANT" ]; then echo "::error::SP_MERGE_VERSION ($CONSTANT) != tag ($TAG)"; FAIL=1; fi
-          if [ "$TAG" != "$README" ]; then echo "::error::readme.txt stable tag ($README) != tag ($TAG)"; FAIL=1; fi
-          exit $FAIL
+      - name: Build ZIP
+        run: |
+          PLUGIN_SLUG=$(basename "$GITHUB_REPOSITORY")
+          mkdir -p "$PLUGIN_SLUG"
+          rsync -a --exclude="$PLUGIN_SLUG" \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.kiro' \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='vendor/bin' \
+            . "$PLUGIN_SLUG/"
+          zip -r "${PLUGIN_SLUG}.zip" "$PLUGIN_SLUG"
+          echo "ZIP_FILE=${PLUGIN_SLUG}.zip" >> "$GITHUB_ENV"
+          echo "PLUGIN_SLUG=${PLUGIN_SLUG}" >> "$GITHUB_ENV"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
         with:
+          artifact-name: sbom-${{ env.PLUGIN_SLUG }}.spdx.json
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_FILE }}
           generate_release_notes: true
