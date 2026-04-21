@@ -51,6 +51,7 @@ jobs:
         run: |
           PLUGIN_SLUG=$(basename "$GITHUB_REPOSITORY")
           ln -s "$GITHUB_WORKSPACE" "/tmp/wordpress/wp-content/plugins/$PLUGIN_SLUG"
+          wp plugin install sportspress --activate --path=/tmp/wordpress
           wp plugin activate "$PLUGIN_SLUG" --path=/tmp/wordpress
 
       - name: Check for fatal errors
