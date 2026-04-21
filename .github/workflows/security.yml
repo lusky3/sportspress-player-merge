@@ -37,7 +37,7 @@ jobs:
   snyk:
     name: Snyk Code
     runs-on: ubuntu-latest
-    if: vars.SNYK_TOKEN != ''
+    if: ${{ secrets.SNYK_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v6
       - uses: snyk/actions/php@master
@@ -50,7 +50,7 @@ jobs:
   sonarcloud:
     name: SonarCloud
     runs-on: ubuntu-latest
-    if: vars.SONAR_TOKEN != ''
+    if: ${{ secrets.SONAR_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v6
         with:
