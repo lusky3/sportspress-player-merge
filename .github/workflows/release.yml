@@ -81,7 +81,7 @@ jobs:
           artifact-name: sbom-${{ env.PLUGIN_SLUG }}.spdx.json
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ env.ZIP_FILE }}
           generate_release_notes: true
