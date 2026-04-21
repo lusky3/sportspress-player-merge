@@ -33,3 +33,29 @@ jobs:
       - uses: actions/checkout@v6
       - name: Run Semgrep
         run: semgrep scan --config p/php --config p/wordpress --error
+
+  snyk:
+    name: Snyk Code
+    runs-on: ubuntu-latest
+    if: vars.SNYK_TOKEN != ''
+    steps:
+      - uses: actions/checkout@v6
+      - uses: snyk/actions/php@master
+        with:
+          command: code test
+          args: --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    if: vars.SONAR_TOKEN != ''
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

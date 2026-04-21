@@ -1,0 +1,46 @@
+name: i18n Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.php'
+      - 'languages/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.php'
+      - 'languages/**'
+
+permissions:
+  contents: read
+
+jobs:
+  i18n:
+    name: Internationalization Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: wp-cli
+
+      - name: Generate POT file
+        run: |
+          PLUGIN_SLUG=$(basename "$GITHUB_REPOSITORY")
+          mkdir -p languages
+          wp i18n make-pot . "languages/${PLUGIN_SLUG}.pot" --slug="$PLUGIN_SLUG"
+
+      - name: Check for text domain mismatches
+        run: |
+          PLUGIN_SLUG=$(basename "$GITHUB_REPOSITORY")
+          MISMATCHES=$(grep -rn --include='*.php' -E "__\(|_e\(|esc_html__\(|esc_html_e\(|esc_attr__\(|esc_attr_e\(|_n\(|_x\(|_ex\(|_nx\(" . \
+            --exclude-dir=vendor --exclude-dir=node_modules \
+            | grep -v "'${PLUGIN_SLUG}'" \
+            | grep -vE "^Binary" || true)
+          if [ -n "$MISMATCHES" ]; then
+            echo "::warning::Possible text domain mismatches found:"
+            echo "$MISMATCHES"
+          fi
