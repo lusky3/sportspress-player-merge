@@ -40,9 +40,11 @@ class SP_Merge_Admin {
 			return;
 		}
 
+		$suffix = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
+
 		wp_enqueue_style(
 			'sp-merge-admin-css',
-			SP_MERGE_PLUGIN_URL . 'assets/css/admin.css',
+			SP_MERGE_PLUGIN_URL . "assets/css/admin{$suffix}.css",
 			array(),
 			SP_MERGE_VERSION
 		);
@@ -65,7 +67,7 @@ class SP_Merge_Admin {
 
 		wp_enqueue_script(
 			'sp-merge-admin-js',
-			SP_MERGE_PLUGIN_URL . 'assets/js/admin.js',
+			SP_MERGE_PLUGIN_URL . "assets/js/admin{$suffix}.js",
 			array( 'jquery', 'sp-merge-select2-js' ),
 			SP_MERGE_VERSION,
 			true

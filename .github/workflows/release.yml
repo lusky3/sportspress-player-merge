@@ -39,6 +39,26 @@ jobs:
       - name: Install composer dependencies
         run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader 2>/dev/null || true
 
+      - name: Minify JS and CSS
+        run: |
+          npm install -g terser csso-cli
+          # Minify JS files (skip already-minified vendor files)
+          find assets/js -name '*.js' ! -name '*.min.js' -exec sh -c '
+            terser "$1" --compress --mangle --output "${1%.js}.min.js"
+          ' _ {} \;
+          # Minify CSS files (skip already-minified vendor files)
+          find assets/css -name '*.css' ! -name '*.min.css' -exec sh -c '
+            csso "$1" --output "${1%.css}.min.css"
+          ' _ {} \;
+
+      - name: Optimize images
+        run: |
+          sudo apt-get install -y --no-install-recommends optipng jpegoptim svgo 2>/dev/null || true
+          find assets -name '*.png' -exec optipng -o5 -quiet {} \; 2>/dev/null || true
+          find assets -name '*.jpg' -o -name '*.jpeg' | xargs -r jpegoptim --strip-all --max=85 2>/dev/null || true
+          find assets -name '*.svg' -exec svgo --quiet {} \; 2>/dev/null || true
+          echo "Image optimization complete"
+
       - name: Build ZIP
         run: |
           PLUGIN_SLUG=$(basename "$GITHUB_REPOSITORY")
