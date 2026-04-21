@@ -1,59 +1,35 @@
-name: Security Scanning
+name: Security
 
 on:
   push:
     branches: [main]
-    paths:
-      - '**.php'
-      - 'composer.*'
   pull_request:
     branches: [main]
-    paths:
-      - '**.php'
-      - 'composer.*'
-  schedule:
-    - cron: '0 6 * * 1'
 
 permissions:
   contents: read
 
 jobs:
-  gitleaks:
-    name: Gitleaks
+  phpstan:
+    name: PHPStan (Level 5)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
         with:
-          fetch-depth: 0
+          php-version: '8.2'
+          coverage: none
+      - name: Install WordPress stubs
+        run: composer global require phpstan/phpstan szepeviktor/phpstan-wordpress php-stubs/wordpress-stubs --no-interaction
+      - name: Run PHPStan
+        run: ~/.composer/vendor/bin/phpstan analyse --configuration=phpstan.neon --no-progress
 
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  snyk:
-    name: Snyk Code
+  semgrep:
+    name: Semgrep
     runs-on: ubuntu-latest
-    if: ${{ secrets.SNYK_TOKEN != '' }}
+    container:
+      image: semgrep/semgrep
     steps:
       - uses: actions/checkout@v6
-
-      - uses: snyk/actions@v1
-        with:
-          command: code test
-          args: --severity-threshold=high
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
-  sonarcloud:
-    name: SonarCloud
-    runs-on: ubuntu-latest
-    if: ${{ secrets.SONAR_TOKEN != '' }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - uses: SonarSource/sonarqube-scan-action@v7
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Semgrep
+        run: semgrep scan --config p/php --config p/wordpress --error
