@@ -40,6 +40,37 @@ class SP_Merge_Processor {
 	);
 
 	/**
+	 * Meta keys owned by WordPress that must never be copied between players.
+	 *
+	 * `_thumbnail_id` is deliberately part of this list: the featured image is
+	 * handled by merge_featured_image(), which only copies it when the primary
+	 * has none. Copying it here as well would leave a second `_thumbnail_id`
+	 * row on primaries that already have an image.
+	 *
+	 * @var string[]
+	 */
+	private const INTERNAL_META_KEYS = array(
+		'_edit_lock',
+		'_edit_last',
+		'_wp_old_slug',
+		'_wp_old_date',
+		'_wp_desired_post_slug',
+		'_thumbnail_id',
+		'_pingme',
+		'_encloseme',
+	);
+
+	/**
+	 * Prefixes of WordPress-internal meta keys that must never be copied.
+	 *
+	 * @var string[]
+	 */
+	private const INTERNAL_META_KEY_PREFIXES = array(
+		'_wp_trash_meta_',
+		'_oembed_',
+	);
+
+	/**
 	 * Transient key used for merge locking.
 	 *
 	 * @var string
@@ -47,7 +78,22 @@ class SP_Merge_Processor {
 	private const LOCK_KEY = 'sp_merge_lock';
 
 	/**
+	 * Post IDs whose meta was written during the current merge attempt.
+	 *
+	 * Tracked so the failure path can purge them from the object cache: ROLLBACK
+	 * restores the database rows but not the values update_post_meta() already
+	 * wrote into a persistent cache.
+	 *
+	 * @var int[]
+	 */
+	private array $touched_post_ids = array();
+
+	/**
 	 * Execute a full merge operation with transaction safety and locking.
+	 *
+	 * The backup is written as `pending` and is only promoted to `active` once the
+	 * merge has committed. A failed merge marks it `failed` — which load_backup_data()
+	 * still accepts — so the operator keeps a usable recovery point.
 	 *
 	 * @param int   $primary_id    The player ID to keep.
 	 * @param int[] $duplicate_ids Player IDs to merge and delete.
@@ -64,8 +110,9 @@ class SP_Merge_Processor {
 			);
 		}
 
-		$backup    = new SP_Merge_Backup();
-		$backup_id = null;
+		$backup                 = new SP_Merge_Backup();
+		$backup_id              = null;
+		$this->touched_post_ids = array();
 
 		try {
 			$backup_id = $backup->create_merge_backup( $primary_id, $duplicate_ids );
@@ -98,6 +145,11 @@ class SP_Merge_Processor {
 
 			$wpdb->query( 'COMMIT' );
 
+			// Only a committed merge promotes the backup out of `pending`.
+			if ( method_exists( $backup, 'mark_active' ) ) {
+				$backup->mark_active( $backup_id );
+			}
+
 			$this->clear_sportspress_caches( $primary_id, $duplicate_ids );
 
 			return array(
@@ -105,15 +157,46 @@ class SP_Merge_Processor {
 				'backup_id' => $backup_id,
 			);
 
-		} catch ( Exception $e ) {
+		} catch ( Throwable $e ) {
+			// Throwable, not Exception: an Error raised inside the transaction — a
+			// TypeError or ValueError from malformed legacy data, or a fatal from
+			// third-party code hooked into the meta, term or delete calls — is not
+			// an Exception in PHP 8, and letting it escape would skip the ROLLBACK.
 			$wpdb->query( 'ROLLBACK' );
 
-			if ( $backup_id ) {
-				$backup->delete_backup( $backup_id );
+			// ROLLBACK restores the rows but not the object cache: update_post_meta()
+			// has already written the merged values into Redis/Memcached, where they
+			// would keep being served and could be re-persisted by the next save.
+			$this->purge_merge_caches( $primary_id, $duplicate_ids );
+
+			// Never delete the backup here — a failed merge is precisely when it is
+			// needed. mark_failed() keeps the row loadable by load_backup_data();
+			// if the backup class predates that method the row is left untouched,
+			// which is still recoverable.
+			if ( $backup_id && method_exists( $backup, 'mark_failed' ) ) {
+				$backup->mark_failed( $backup_id );
 			}
 
 			if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-				error_log( 'SP Merge error: ' . $e->getMessage() );
+				error_log(
+					sprintf(
+						'SP Merge error: %s (backup %s retained)',
+						$e->getMessage(),
+						$backup_id ? $backup_id : 'none'
+					)
+				);
+			}
+
+			if ( $backup_id ) {
+				return array(
+					'success'   => false,
+					'backup_id' => $backup_id,
+					'message'   => sprintf(
+						/* translators: %s: retained backup ID */
+						__( 'Merge failed and was rolled back. Backup %s has been retained — use it to verify or restore the affected records before retrying.', 'sportspress-player-merge' ),
+						$backup_id
+					),
+				);
 			}
 
 			return array(
@@ -207,6 +290,10 @@ class SP_Merge_Processor {
 	/**
 	 * Merge player meta data intelligently.
 	 *
+	 * Every key on the duplicate is considered except WordPress internals — third
+	 * party fields such as `spt_email`, `spt_skill` and `spt_captain` carry real
+	 * data and were previously discarded by an `sp_`-only allow-list.
+	 *
 	 * @param int $primary_id   Primary player ID.
 	 * @param int $duplicate_id Duplicate player ID.
 	 * @throws Exception On failure.
@@ -214,11 +301,17 @@ class SP_Merge_Processor {
 	private function merge_meta_data( int $primary_id, int $duplicate_id ): void {
 		$duplicate_meta = get_post_meta( $duplicate_id );
 
-		$skip_fields        = array( 'sp_columns', 'sp_number' );
-		$array_merge_fields = array( 'sp_statistics', 'sp_leagues', 'sp_assignments', 'sp_metrics' );
+		$skip_fields = array( 'sp_columns', 'sp_number' );
+
+		/*
+		 * Serialized-array fields only. `sp_assignments` is deliberately absent:
+		 * SportsPress stores it as multiple rows of plain "league_season_team"
+		 * strings, so it belongs on the multi-row union path below.
+		 */
+		$array_merge_fields = array( 'sp_statistics', 'sp_leagues', 'sp_metrics' );
 
 		foreach ( $duplicate_meta as $key => $values ) {
-			if ( 0 !== strpos( $key, 'sp_' ) ) {
+			if ( $this->is_internal_meta_key( $key ) ) {
 				continue;
 			}
 
@@ -232,6 +325,16 @@ class SP_Merge_Processor {
 			}
 
 			$existing = get_post_meta( $primary_id, $key );
+
+			/*
+			 * Non-SportsPress fields are single-valued by convention, so they only
+			 * fill a gap on the primary. Unioning them would leave the primary with
+			 * two competing values (two `spt_email` rows, for example).
+			 */
+			if ( 0 !== strpos( $key, 'sp_' ) && ! empty( $existing ) ) {
+				continue;
+			}
+
 			foreach ( $values as $value ) {
 				if ( ! in_array( $value, $existing, true ) ) {
 					add_post_meta( $primary_id, $key, $value );
@@ -240,6 +343,26 @@ class SP_Merge_Processor {
 		}
 
 		$this->deduplicate_multi_value_meta( $primary_id );
+	}
+
+	/**
+	 * Check whether a meta key belongs to WordPress itself and must not be copied.
+	 *
+	 * @param string $key Meta key.
+	 * @return bool True when the key is a WordPress internal.
+	 */
+	private function is_internal_meta_key( string $key ): bool {
+		if ( in_array( $key, self::INTERNAL_META_KEYS, true ) ) {
+			return true;
+		}
+
+		foreach ( self::INTERNAL_META_KEY_PREFIXES as $prefix ) {
+			if ( 0 === strpos( $key, $prefix ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -372,8 +495,9 @@ class SP_Merge_Processor {
 	 * Update serialized event meta that contains player IDs as array keys.
 	 * Uses additive merging for same-event collisions (sums numeric stats).
 	 *
-	 * @param int $primary_id   Primary player ID.
-	 * @param int $duplicate_id Duplicate player ID.
+	 * @param int   $primary_id   Primary player ID.
+	 * @param int   $duplicate_id Duplicate player ID.
+	 * @param int[] $event_ids    Event IDs collected before the simple meta update.
 	 */
 	private function update_serialized_event_meta( int $primary_id, int $duplicate_id, array $event_ids = array() ): void {
 		if ( empty( $event_ids ) ) {
@@ -384,7 +508,8 @@ class SP_Merge_Processor {
 		update_postmeta_cache( array_map( 'intval', $event_ids ) );
 
 		foreach ( $event_ids as $event_id ) {
-			$event_id = (int) $event_id;
+			$event_id                 = (int) $event_id;
+			$this->touched_post_ids[] = $event_id;
 
 			foreach ( self::SERIALIZED_PLAYER_META_KEYS as $meta_key ) {
 				$raw = get_post_meta( $event_id, $meta_key, true );
@@ -544,7 +669,8 @@ class SP_Merge_Processor {
 		}
 
 		foreach ( $list_ids as $list_id ) {
-			$list_id = (int) $list_id;
+			$list_id                  = (int) $list_id;
+			$this->touched_post_ids[] = $list_id;
 
 			// Update simple sp_player meta rows.
 			$wpdb->update(
@@ -608,5 +734,37 @@ class SP_Merge_Processor {
 		 * @param int[] $duplicate_ids The merged (deleted) player IDs.
 		 */
 		do_action( 'sp_merge_after_merge', $primary_id, $duplicate_ids );
+	}
+
+	/**
+	 * Purge object-cache entries written during a merge that was rolled back.
+	 *
+	 * Covers the primary, every duplicate, and every event or list post whose meta
+	 * was rewritten before the failure. Without this a persistent object cache keeps
+	 * serving the merged values that no longer exist in the database.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 */
+	private function purge_merge_caches( int $primary_id, array $duplicate_ids ): void {
+		$post_ids = array_merge(
+			array( $primary_id ),
+			array_map( 'intval', $duplicate_ids ),
+			$this->touched_post_ids
+		);
+
+		foreach ( array_unique( $post_ids ) as $post_id ) {
+			$post_id = (int) $post_id;
+
+			// clean_post_cache() bails when the post row cannot be read, so the meta
+			// cache is dropped explicitly first.
+			wp_cache_delete( $post_id, 'post_meta' );
+			clean_post_cache( $post_id );
+
+			delete_transient( 'sp_player_data_' . $post_id );
+			delete_transient( 'sp_event_data_' . $post_id );
+		}
+
+		$this->touched_post_ids = array();
 	}
 }
