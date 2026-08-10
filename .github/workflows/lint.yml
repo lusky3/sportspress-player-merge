@@ -14,7 +14,7 @@ jobs:
     name: PHP Syntax Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.2'
@@ -26,7 +26,7 @@ jobs:
     name: OxLint (JS)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install oxlint
         # Exact version, and no lifecycle scripts. oxlint declares no scripts and
         # ships its platform binary via optionalDependencies, so --ignore-scripts
@@ -41,7 +41,7 @@ jobs:
     container:
       image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run Semgrep
         run: semgrep scan --config p/php --config p/wordpress --error
 
@@ -49,7 +49,7 @@ jobs:
     name: Copy-Paste Detection
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run jscpd
         # Pinned and --yes so npx resolves a known version rather than whatever is
         # current at run time. ignore-scripts is set via env so it also covers the
@@ -62,7 +62,7 @@ jobs:
     name: Accessibility Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check aria attributes in PHP templates
         run: |
           echo "Checking for aria-live on dynamic message containers..."
