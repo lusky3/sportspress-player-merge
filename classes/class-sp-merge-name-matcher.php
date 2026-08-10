@@ -149,6 +149,13 @@ class SP_Merge_Name_Matcher {
 	private static ?array $nickname_lookup = null;
 
 	/**
+	 * Memoized normalize_surname() results, keyed by raw surname.
+	 *
+	 * @var array<string, string>
+	 */
+	private static array $surname_cache = array();
+
+	/**
 	 * Build the reverse nickname lookup table.
 	 */
 	private static function build_nickname_lookup(): void {
@@ -180,8 +187,16 @@ class SP_Merge_Name_Matcher {
 		}
 		// Normalize various apostrophe/quote chars to ASCII apostrophe.
 		$name = str_replace( array( "\u{2019}", "\u{2018}", "\u{02BC}", "\u{0060}" ), "'", $name );
-		// Strip SportsPress position abbreviations like (G), (C), (D), (F), (LW), (RW), (dup).
-		$name = preg_replace( '/\s*\([A-Za-z\/]+\)\s*$/', '', $name );
+		// Strip trailing parenthesised annotations: position abbreviations like
+		// (G), (C), (LW), housekeeping markers like (dup), (Div4), (Dup / Div 3)
+		// and cross-references like (dup /w Stephani King-Rankin). Repeated so
+		// "Robert Rabey (G) (DUP)" loses both. The inner class excludes
+		// parentheses and is length-bounded so it can never swallow a real name,
+		// and a name that is *entirely* parenthesised is left alone.
+		$stripped = preg_replace( '/(?:\s*\([^()]{1,40}\))+\s*$/', '', $name );
+		if ( null !== $stripped && '' !== trim( $stripped ) ) {
+			$name = $stripped;
+		}
 		// Collapse whitespace.
 		$name = preg_replace( '/\s+/', ' ', trim( $name ) );
 		return $name;
@@ -205,6 +220,14 @@ class SP_Merge_Name_Matcher {
 	 * @return string Normalized surname.
 	 */
 	private static function normalize_surname( string $surname ): string {
+		// Pure function called once per candidate pair; on a 2000-player roster
+		// that is millions of calls over a few thousand distinct surnames.
+		if ( isset( self::$surname_cache[ $surname ] ) ) {
+			return self::$surname_cache[ $surname ];
+		}
+
+		$original = $surname;
+
 		// Strip apostrophes: O'Connor → oconnor.
 		$s = str_replace( "'", '', $surname );
 		// Mac → mc.
@@ -216,6 +239,9 @@ class SP_Merge_Name_Matcher {
 		$s = preg_replace( '/^(van|von|de|du|le|la|del|della|di|el|al)(der|den|het|la|les)\s*/', '', $s );
 		// Remove remaining spaces (van der Berg → vanderberg already handled above, catch stragglers).
 		$s = str_replace( ' ', '', $s );
+
+		self::$surname_cache[ $original ] = $s;
+
 		return $s;
 	}
 
@@ -370,11 +396,18 @@ class SP_Merge_Name_Matcher {
 		$last_names_match = ( $norm_last_a === $norm_last_b );
 		$last_name_typo   = false;
 		if ( ! $last_names_match ) {
-			$max_len = max( strlen( $norm_last_a ), strlen( $norm_last_b ) );
+			$len_a   = strlen( $norm_last_a );
+			$len_b   = strlen( $norm_last_b );
+			$max_len = max( $len_a, $len_b );
 			$max_lev = $max_len >= 6 ? 2 : 1;
-			$lev     = levenshtein( $norm_last_a, $norm_last_b );
-			if ( $lev <= $max_lev && $lev > 0 && $max_len >= 4 ) {
-				$last_name_typo = true;
+			// Edit distance is never below the length difference, so this skips
+			// levenshtein() on pairs that cannot possibly qualify. Same result,
+			// and it is the hot path: every candidate pair reaches this line.
+			if ( $max_len >= 4 && abs( $len_a - $len_b ) <= $max_lev ) {
+				$lev = levenshtein( $norm_last_a, $norm_last_b );
+				if ( $lev <= $max_lev && $lev > 0 ) {
+					$last_name_typo = true;
+				}
 			}
 		}
 
@@ -502,8 +535,17 @@ class SP_Merge_Name_Matcher {
 	/**
 	 * Find all duplicate groups from a list of players.
 	 *
+	 * A candidate only joins a group when it matches *every* player already in
+	 * that group, not merely the anchor it happened to be compared against
+	 * first. The group's reported certainty is the weakest pairwise score in
+	 * the group — never the strongest — because the operator stages the whole
+	 * group for permanent deletion in one click, and the group is only as
+	 * trustworthy as its weakest link. Each returned player object carries its
+	 * own weakest score in a `certainty` property so the UI can show, and let
+	 * the operator opt out of, individual members.
+	 *
 	 * @param array $players Array of WP_Post objects (sp_player).
-	 * @return array Array of groups: [ [ 'players' => [...], 'certainty' => int, 'scenario' => string ], ... ]
+	 * @return array Array of groups: [ [ 'players' => [...], 'certainty' => int, 'scenario' => string, 'certainties' => [ id => int ], 'member_certainty' => [ id => int ] ], ... ]
 	 */
 	public static function find_groups( array $players ): array {
 		$parsed = array();
@@ -523,34 +565,82 @@ class SP_Merge_Name_Matcher {
 				continue;
 			}
 
-			$group     = array( $parsed[ $i ] );
-			$best_cert = 0;
-			$best_scen = '';
+			$members = array( $i );
+			$pairs   = array(); // "memberIndex|candidateIndex" => compare() result.
 
 			for ( $j = $i + 1; $j < $count; $j++ ) {
 				if ( isset( $matched[ $parsed[ $j ]['post']->ID ] ) ) {
 					continue;
 				}
 
-				$result = self::compare( $parsed[ $i ]['parsed'], $parsed[ $j ]['parsed'] );
-				if ( $result['match'] ) {
-					$group[] = $parsed[ $j ];
-					$matched[ $parsed[ $j ]['post']->ID ] = true;
-					if ( $result['certainty'] > $best_cert ) {
-						$best_cert = $result['certainty'];
-						$best_scen = $result['scenario'];
+				// All-pairs: the candidate must match every current member.
+				$candidate_pairs = array();
+				foreach ( $members as $m ) {
+					$result = self::compare( $parsed[ $m ]['parsed'], $parsed[ $j ]['parsed'] );
+					if ( ! $result['match'] ) {
+						$candidate_pairs = array();
+						break;
 					}
+					$candidate_pairs[ $m . '|' . $j ] = $result;
+				}
+
+				if ( empty( $candidate_pairs ) ) {
+					continue;
+				}
+
+				$pairs     = $pairs + $candidate_pairs;
+				$members[] = $j;
+
+				$matched[ $parsed[ $j ]['post']->ID ] = true;
+			}
+
+			if ( count( $members ) < 2 ) {
+				continue;
+			}
+
+			$matched[ $parsed[ $i ]['post']->ID ] = true;
+
+			// Weakest pairwise score, per member and for the group as a whole.
+			$member_cert = array_fill_keys( $members, 100 );
+			$group_cert  = 100;
+			$group_scen  = '';
+			foreach ( $pairs as $key => $result ) {
+				$ends = explode( '|', $key );
+				$a    = (int) $ends[0];
+				$b    = (int) $ends[1];
+				$cert = (int) $result['certainty'];
+
+				$member_cert[ $a ] = min( $member_cert[ $a ], $cert );
+				$member_cert[ $b ] = min( $member_cert[ $b ], $cert );
+
+				if ( $cert < $group_cert || '' === $group_scen ) {
+					$group_cert = min( $group_cert, $cert );
+					$group_scen = $result['scenario'];
 				}
 			}
 
-			if ( count( $group ) >= 2 ) {
-				$matched[ $parsed[ $i ]['post']->ID ] = true;
-				$groups[] = array(
-					'players'   => array_map( fn( $g ) => $g['post'], $group ),
-					'certainty' => $best_cert,
-					'scenario'  => $best_scen,
-				);
+			$group_players    = array();
+			$member_certainty = array();
+			foreach ( $members as $m ) {
+				$player_id = $parsed[ $m ]['post']->ID;
+
+				// Clone so the certainty never leaks onto the cached WP_Post.
+				$post            = clone $parsed[ $m ]['post'];
+				$post->certainty = $member_cert[ $m ];
+
+				$group_players[]                = $post;
+				$member_certainty[ $player_id ] = $member_cert[ $m ];
 			}
+
+			$groups[] = array(
+				'players'          => $group_players,
+				'certainty'        => $group_cert,
+				'scenario'         => $group_scen,
+				// Same map under two names: consumers that cannot read a
+				// property off the player object can look the score up by ID.
+				'certainties'      => $member_certainty,
+				'member_certainty' => $member_certainty,
+			);
 		}
 
 		// Sort by certainty descending.

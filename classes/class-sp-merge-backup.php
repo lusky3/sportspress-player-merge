@@ -186,7 +186,8 @@ class SP_Merge_Backup {
 	 *
 	 * @param string $backup_id Backup ID.
 	 * @param bool   $force     Proceed even when captured values changed after the merge.
-	 * @return array{success: bool, message?: string}
+	 * @return array{success: bool, code?: string, message?: string} On refusal, code is one of
+	 *               not_found, conflict, values_changed (the only forcible one) or error.
 	 */
 	public function revert( string $backup_id, bool $force = false ): array {
 		global $wpdb;
@@ -199,24 +200,30 @@ class SP_Merge_Backup {
 		if ( ! $row || ! is_array( $backup_data ) || empty( $backup_data['primary_id'] ) ) {
 			return array(
 				'success' => false,
+				'code'    => 'not_found',
 				'message' => __( 'Backup data not found', 'sportspress-player-merge' ),
 			);
 		}
 
-		// Guard 1: a later merge may have rewritten the same posts.
+		// Guard 1: a later merge may have rewritten the same posts. Never
+		// forcible — the later merges have to be unwound first.
 		$conflicts = $this->find_conflicting_backups( $row );
 		if ( ! empty( $conflicts ) ) {
 			return array(
 				'success' => false,
+				'code'    => 'conflict',
 				'message' => $this->format_conflict_message( $conflicts ),
 			);
 		}
 
 		// Guard 2: somebody may have edited those posts since the merge ran.
+		// This is the one refusal $force overrides, and the only one the UI
+		// offers an override for.
 		$changed = $this->find_values_changed_since_merge( $row, $backup_data );
 		if ( ! empty( $changed ) && ! $force ) {
 			return array(
 				'success' => false,
+				'code'    => 'values_changed',
 				'message' => $this->format_changed_message( $changed ),
 			);
 		}
@@ -241,6 +248,7 @@ class SP_Merge_Backup {
 
 			return array(
 				'success' => false,
+				'code'    => 'error',
 				'message' => __( 'Revert failed. Please check the error log for details.', 'sportspress-player-merge' ),
 			);
 		}
