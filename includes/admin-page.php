@@ -10,6 +10,17 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
+
+$recent_backups = is_array( $recent_backups ?? null ) ? $recent_backups : array();
+
+// A reverted backup has nothing left to restore, so it must not enable the
+// "Revert Last Merge" shortcut.
+$revertable_backups = array_filter(
+	$recent_backups,
+	static function ( $backup ) {
+		return 'reverted' !== ( $backup['status'] ?? 'active' );
+	}
+);
 ?>
 
 <div class="wrap sp-merge-wrap">
@@ -73,7 +84,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 							<span class="dashicons dashicons-admin-tools"></span>
 							<?php esc_html_e( 'Execute Merge', 'sportspress-player-merge' ); ?>
 						</button>
-						<button type="button" id="revert-merge" class="button button-secondary sp-btn-revert<?php echo empty( $recent_backups ) ? ' sp-hidden' : ''; ?>" <?php disabled( empty( $recent_backups ) ); ?>>
+						<button type="button" id="revert-merge" class="button button-secondary sp-btn-revert<?php echo empty( $revertable_backups ) ? ' sp-hidden' : ''; ?>" <?php disabled( empty( $revertable_backups ) ); ?>>
 							<span class="dashicons dashicons-undo"></span>
 							<?php esc_html_e( 'Revert Last Merge', 'sportspress-player-merge' ); ?>
 						</button>
@@ -106,6 +117,18 @@ if ( ! defined( 'ABSPATH' ) ) {
 				<h2>
 					<span class="dashicons dashicons-backup"></span>
 					<?php esc_html_e( 'Recent Merges (Available for Revert)', 'sportspress-player-merge' ); ?>
+					<span class="sp-backup-count">
+						<?php
+						echo esc_html(
+							sprintf(
+								/* translators: 1: number of backups listed, 2: number still revertable */
+								__( '%1$d listed, %2$d revertable', 'sportspress-player-merge' ),
+								count( $recent_backups ),
+								count( $revertable_backups )
+							)
+						);
+						?>
+					</span>
 				</h2>
 				<div class="sp-backup-actions">
 					<button type="button" id="select-all-backups" class="button button-secondary"><?php esc_html_e( 'Select All', 'sportspress-player-merge' ); ?></button>
@@ -116,21 +139,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 			</div>
 			<div class="sp-merge-card-body">
 				<?php foreach ( $recent_backups as $backup ) : ?>
-				<div class="sp-backup-item">
-					<input type="checkbox" class="backup-checkbox" value="<?php echo esc_attr( $backup['id'] ); ?>" id="backup-<?php echo esc_attr( $backup['id'] ); ?>">
-					<label for="backup-<?php echo esc_attr( $backup['id'] ); ?>">
-						<strong><?php echo esc_html( $backup['primary_name'] ); ?></strong> &larr; <?php echo esc_html( implode( ', ', $backup['duplicate_names'] ) ); ?>
-					</label>
-					<span class="sp-backup-date"><?php echo esc_html( $backup['date'] ); ?></span>
-					<div class="sp-backup-buttons">
-						<button type="button" class="button button-secondary sp-revert-backup" data-backup-id="<?php echo esc_attr( $backup['id'] ); ?>">
-							<span class="dashicons dashicons-undo"></span> <?php esc_html_e( 'Revert', 'sportspress-player-merge' ); ?>
-						</button>
-						<button type="button" class="button button-secondary sp-delete-backup" data-backup-id="<?php echo esc_attr( $backup['id'] ); ?>">
-							<span class="dashicons dashicons-trash"></span> <?php esc_html_e( 'Delete', 'sportspress-player-merge' ); ?>
-						</button>
-					</div>
-				</div>
+					<?php $this->render_backup_item( $backup ); ?>
 				<?php endforeach; ?>
 			</div>
 		</div>

@@ -13,13 +13,21 @@
 
 		lastBackupId: null,
 
+		// Token returned by the preview, binding Execute to the exact selection
+		// that was previewed. Cleared whenever either select changes.
+		previewToken: null,
+
+		// Warnings the server raised about the previewed selection.
+		previewWarnings: [],
+
 		/**
 		 * Accessible confirmation dialog with ARIA attributes and focus trapping.
 		 *
 		 * @param {string} message Confirmation message.
+		 * @param {Array} details Optional lines listed under the message.
 		 * @return {Promise<boolean>}
 		 */
-		customConfirm: function( message ) {
+		customConfirm: function( message, details ) {
 			return new Promise( function( resolve ) {
 				var $trigger = $( document.activeElement );
 				var $modal = $( '<div class="sp-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="sp-confirm-title" tabindex="-1"></div>' );
@@ -28,7 +36,17 @@
 				var $yesBtn = $( '<button class="button button-primary sp-confirm-yes">Yes</button>' );
 				var $noBtn = $( '<button class="button sp-confirm-no" style="margin-left:10px;">No</button>' );
 
-				$dialog.append( $title, $yesBtn, $noBtn );
+				$dialog.append( $title );
+
+				if ( details && details.length ) {
+					var $list = $( '<ul class="sp-confirm-details"></ul>' );
+					for ( var d = 0; d < details.length; d++ ) {
+						$list.append( $( '<li></li>' ).text( details[ d ] ) );
+					}
+					$dialog.append( $list );
+				}
+
+				$dialog.append( $yesBtn, $noBtn );
 				$modal.append( $dialog );
 				$( 'body' ).append( $modal );
 
@@ -135,31 +153,98 @@
 			$( '#select-all-backups' ).on( 'click', this.handleSelectAllBackups.bind( this ) );
 			$( '#delete-selected-backups' ).on( 'click', this.handleDeleteSelectedBackups.bind( this ) );
 			$( document ).on( 'change', '.backup-checkbox', this.updateDeleteButtonState.bind( this ) );
+			// Any change to either select retires the preview: the card on screen
+			// must never describe a merge other than the one Execute would run.
+			$( '#primary-player, #duplicate-players' ).on( 'change', this.invalidatePreview.bind( this ) );
 			$( '#primary-player, #duplicate-players' ).on( 'change', this.validateForm.bind( this ) );
 			$( '#scan-duplicates' ).on( 'click', this.handleScanDuplicates.bind( this ) );
 			$( document ).on( 'click', '.sp-select-duplicates', this.handleSelectDuplicates.bind( this ) );
 			$( document ).on( 'click', '.sp-expand-toggle', this.handleExpandToggle.bind( this ) );
+			$( document ).on( 'click', '.sp-force-revert', this.handleForceRevert.bind( this ) );
 		},
 
 		/**
-		 * Sanitize HTML by removing scripts and event handlers.
+		 * Retire the current preview and disable Execute.
+		 *
+		 * Called on every change to either select, not only when the form becomes
+		 * invalid: swapping one valid player for another used to leave a stale
+		 * preview on screen with Execute live.
+		 */
+		invalidatePreview: function() {
+			var hadPreview = this.previewToken !== null || $( '#merge-preview-card' ).is( ':visible' );
+
+			this.previewToken = null;
+			this.previewWarnings = [];
+			$( '#preview-warnings' ).remove();
+			$( '#preview-content' ).empty();
+			$( '#merge-preview-card' ).hide();
+			$( '#execute-merge' ).prop( 'disabled', true );
+
+			if ( hadPreview ) {
+				this.showMessage( 'info', spMergeAjax.strings.previewStale );
+			}
+
+			this.updateBackupButtonStates();
+		},
+
+		/**
+		 * Sanitize HTML by removing scripts, dangerous elements and event handlers.
+		 *
+		 * Parsing MUST happen in an inert document. The previous implementation
+		 * used `$( '<div>' ).html( html )` and stripped afterwards, which runs the
+		 * very code it then removes: jQuery's .html() tests the string against
+		 * /<script|<style|<link/i and, when it matches, SKIPS the innerHTML fast
+		 * path and falls through to .append() — which goes through domManip and
+		 * evaluates scripts. So a payload containing <script> executed before a
+		 * single node was removed. Flagged BLOCKER by SonarQube (jssecurity:S5696).
+		 *
+		 * DOMParser builds a document with no browsing context: scripts are never
+		 * executed and resource-loading attributes such as onerror never fire, so
+		 * stripping afterwards is sound.
 		 *
 		 * @param {string} html Raw HTML.
 		 * @return {string} Sanitized HTML.
 		 */
 		sanitizeHtml: function( html ) {
-			var $temp = $( '<div>' ).html( html );
-			$temp.find( 'script, iframe, object, embed' ).remove();
-			$temp.find( '*' ).each( function() {
+			var doc;
+
+			try {
+				doc = new DOMParser().parseFromString( String( html ), 'text/html' );
+			} catch ( e ) {
+				return '';
+			}
+
+			if ( ! doc || ! doc.body ) {
+				return '';
+			}
+
+			var $body = $( doc.body );
+
+			$body.find( 'script, iframe, object, embed, link, style, base, meta, form' ).remove();
+
+			$body.find( '*' ).each( function() {
 				var attrs = this.attributes;
 				for ( var i = attrs.length - 1; i >= 0; i-- ) {
 					var name = ( attrs[i].name || '' ).toLowerCase();
-					if ( name.indexOf( 'on' ) === 0 ) {
+					var value = attrs[i].value || '';
+
+					// Inline handlers, and srcdoc which smuggles a whole document.
+					if ( 0 === name.indexOf( 'on' ) || 'srcdoc' === name ) {
+						this.removeAttribute( attrs[i].name );
+						continue;
+					}
+
+					// javascript: in any URL-bearing attribute.
+					if (
+						( 'href' === name || 'src' === name || 'action' === name || 'formaction' === name || 'xlink:href' === name ) &&
+						/^\s*javascript:/i.test( value )
+					) {
 						this.removeAttribute( attrs[i].name );
 					}
 				}
 			} );
-			return $temp.html();
+
+			return $body.html();
 		},
 
 		/**
@@ -226,9 +311,13 @@
 
 		handlePreviewSuccess: function( response ) {
 			if ( response.success && response.data && response.data.preview ) {
+				this.previewToken = response.data.token || null;
+				this.previewWarnings = response.data.warnings || [];
+
 				$( '#preview-content' ).html( this.sanitizeHtml( response.data.preview ) );
+				this.renderPreviewWarnings( this.previewWarnings );
 				$( '#merge-preview-card' ).removeClass( 'sp-hidden' ).show();
-				$( '#execute-merge' ).prop( 'disabled', false );
+				$( '#execute-merge' ).prop( 'disabled', ! this.previewToken );
 
 				$( 'html, body' ).animate( {
 					scrollTop: $( '#merge-preview-card' ).offset().top - 50
@@ -241,8 +330,35 @@
 			}
 		},
 
+		/**
+		 * Show the survivor-choice warnings above the preview body.
+		 *
+		 * @param {Array} warnings Server-generated warning strings.
+		 */
+		renderPreviewWarnings: function( warnings ) {
+			$( '#preview-warnings' ).remove();
+
+			if ( ! warnings || ! warnings.length ) {
+				return;
+			}
+
+			var $box = $( '<div id="preview-warnings" class="sp-preview-warnings"></div>' );
+			var $list = $( '<ul></ul>' );
+
+			for ( var i = 0; i < warnings.length; i++ ) {
+				$list.append( $( '<li></li>' ).text( warnings[i] ) );
+			}
+
+			$box.append( $( '<p></p>' ).append( $( '<strong></strong>' ).text( 'Check the survivor before executing:' ) ), $list );
+			$( '#preview-content' ).before( $box );
+		},
+
 		handleCancelPreview: function( e ) {
 			e.preventDefault();
+			this.previewToken = null;
+			this.previewWarnings = [];
+			$( '#preview-warnings' ).remove();
+			$( '#preview-content' ).empty();
 			$( '#merge-preview-card' ).hide();
 			$( '#execute-merge' ).prop( 'disabled', true );
 			this.updateBackupButtonStates();
@@ -266,10 +382,30 @@
 		handleExecuteMerge: function( e ) {
 			e.preventDefault();
 			var self = this;
+
+			if ( ! this.previewToken ) {
+				this.showMessage( 'error', spMergeAjax.strings.previewStale );
+				return;
+			}
+
 			var primaryName = $( '#primary-player option:selected' ).text() || 'selected player';
-			var dupCount = ( $( '#duplicate-players' ).val() || [] ).length;
-			var message = 'Merge ' + dupCount + ' duplicate(s) into "' + primaryName + '"? This will reassign all linked data and delete the duplicate player(s).';
-			this.customConfirm( message ).then( function( confirmed ) {
+			var duplicates = $( '#duplicate-players option:selected' ).map( function() {
+				return $( this ).text();
+			} ).get();
+
+			// Every player about to be deleted is named, not just counted: a
+			// swapped duplicate was previously invisible in this dialog.
+			var details = duplicates.map( function( name ) {
+				return 'DELETE: ' + name;
+			} );
+
+			for ( var i = 0; i < this.previewWarnings.length; i++ ) {
+				details.push( 'WARNING: ' + this.previewWarnings[i] );
+			}
+
+			var message = 'Permanently delete ' + duplicates.length + ' player record(s), merging them into "' + primaryName + '"? This cannot be undone except by reverting from the backup.';
+
+			this.customConfirm( message, details ).then( function( confirmed ) {
 				if ( confirmed ) {
 					self.proceedWithMerge();
 				}
@@ -282,6 +418,7 @@
 			$.post( spMergeAjax.ajaxUrl, {
 				action: 'sp_execute_merge',
 				nonce: spMergeAjax.nonce,
+				preview_token: this.previewToken,
 				primary_player: $( '#primary-player' ).val(),
 				duplicate_players: $( '#duplicate-players' ).val() || []
 			} )
@@ -292,6 +429,9 @@
 
 		handleExecuteSuccess: function( response ) {
 			if ( response.success ) {
+				this.previewToken = null;
+				this.previewWarnings = [];
+				$( '#preview-warnings' ).remove();
 				this.lastBackupId = response.data.backup_id;
 				try {
 					localStorage.setItem( 'sp_last_backup_id', this.lastBackupId );
@@ -328,38 +468,7 @@
 		},
 
 		executeRevert: function() {
-			this.setLoadingState( true );
-
-			$.post( spMergeAjax.ajaxUrl, {
-				action: 'sp_revert_merge',
-				nonce: spMergeAjax.nonce,
-				backup_id: this.lastBackupId
-			} )
-				.done( this.handleRevertSuccess.bind( this ) )
-				.fail( this.handleAjaxError.bind( this ) )
-				.always( this.setLoadingState.bind( this, false ) );
-		},
-
-		handleRevertSuccess: function( response ) {
-			if ( response.success ) {
-				this.lastBackupId = null;
-				try {
-					localStorage.removeItem( 'sp_last_backup_id' );
-				} catch ( e ) {
-					// localStorage unavailable.
-				}
-
-				$( '#revert-merge' ).hide().prop( 'disabled', true );
-				$( '#execute-merge' ).prop( 'disabled', true );
-				this.showMessage( 'success', spMergeAjax.strings.revertSuccess );
-				this.resetForm();
-
-				setTimeout( function() {
-					window.location.reload();
-				}, 3000 );
-			} else {
-				this.showMessage( 'error', ( response.data && response.data.message ) || 'Revert operation failed.' );
-			}
+			this.executeBackupRevert( this.lastBackupId, false );
 		},
 
 		handleAjaxError: function() {
@@ -373,8 +482,18 @@
 				$( '.sp-revert-backup, .sp-delete-backup' ).prop( 'disabled', true );
 			} else {
 				$( '#sp-merge-loading' ).hide();
+
+				// Everything the loading state disabled comes back, then the
+				// buttons with their own preconditions are re-evaluated. Without
+				// the blanket re-enable, Scan stayed dead after the first scan.
+				$( '.sp-merge-wrap button:not(#cancel-preview)' ).prop( 'disabled', false );
+
 				this.validateForm();
 				this.updateBackupButtonStates();
+
+				// Execute is gated on a live preview, never on the loading state.
+				$( '#execute-merge' ).prop( 'disabled', ! this.previewToken );
+				$( '#revert-merge' ).prop( 'disabled', ! this.lastBackupId );
 			}
 		},
 
@@ -415,32 +534,102 @@
 			var self = this;
 			this.customConfirm( 'Are you sure you want to revert this merge? This will restore the deleted players.' ).then( function( confirmed ) {
 				if ( confirmed ) {
-					self.executeBackupRevert( backupId );
+					self.executeBackupRevert( backupId, false );
 				}
 			} );
 		},
 
-		executeBackupRevert: function( backupId ) {
+		/**
+		 * Post a revert.
+		 *
+		 * @param {string} backupId Backup to revert.
+		 * @param {boolean} force Override the "values changed since the merge"
+		 *                        refusal. Only ever true after the operator has
+		 *                        seen the refusal and confirmed it a second time.
+		 */
+		executeBackupRevert: function( backupId, force ) {
 			var self = this;
+
+			if ( ! backupId ) {
+				this.showMessage( 'error', spMergeAjax.strings.noMergeData );
+				return;
+			}
+
 			this.setLoadingState( true );
 
-			$.post( spMergeAjax.ajaxUrl, {
+			var payload = {
 				action: 'sp_revert_merge',
 				nonce: spMergeAjax.nonce,
 				backup_id: backupId
-			} )
+			};
+
+			if ( force === true ) {
+				payload.force = '1';
+			}
+
+			$.post( spMergeAjax.ajaxUrl, payload )
 				.done( function( response ) {
 					if ( response.success ) {
-						self.showMessage( 'success', 'Merge reverted successfully!' );
+						self.lastBackupId = null;
+						try {
+							localStorage.removeItem( 'sp_last_backup_id' );
+						} catch ( e ) {
+							// localStorage unavailable.
+						}
+
+						self.showMessage( 'success', ( response.data && response.data.message ) || spMergeAjax.strings.revertSuccess );
 						setTimeout( function() {
 							window.location.reload();
 						}, 2000 );
-					} else {
-						self.showMessage( 'error', ( response.data && response.data.message ) || 'Revert failed.' );
+						return;
 					}
+
+					var message = ( response.data && response.data.message ) || 'Revert failed.';
+
+					// The backup class refused because values changed after the
+					// merge. That refusal is overridable, but only as a separate,
+					// deliberate second step — never as part of this click.
+					if ( response.data && response.data.force_offered ) {
+						self.offerForceRevert( backupId, message );
+						return;
+					}
+
+					self.showMessage( 'error', message );
 				} )
 				.fail( this.handleAjaxError.bind( this ) )
 				.always( this.setLoadingState.bind( this, false ) );
+		},
+
+		/**
+		 * Show a refusal alongside an explicit override control.
+		 *
+		 * @param {string} backupId Backup that was refused.
+		 * @param {string} reason Refusal text from the server, naming what changed.
+		 */
+		offerForceRevert: function( backupId, reason ) {
+			this.showMessage( 'error', reason );
+
+			var $button = $( '<button type="button" class="button button-secondary sp-force-revert"></button>' )
+				.text( spMergeAjax.strings.overrideLabel )
+				.attr( 'data-backup-id', backupId )
+				.attr( 'data-reason', reason );
+
+			$( '.sp-merge-message' ).append( $( '<div class="sp-force-revert-wrap"></div>' ).append( $button ) );
+		},
+
+		handleForceRevert: function( e ) {
+			e.preventDefault();
+
+			var $button = $( e.target ).closest( '.sp-force-revert' );
+			var backupId = $button.attr( 'data-backup-id' );
+			var reason = $button.attr( 'data-reason' ) || '';
+			var self = this;
+
+			this.customConfirm( spMergeAjax.strings.overrideIntro, [ reason ] ).then( function( confirmed ) {
+				if ( confirmed ) {
+					self.executeBackupRevert( backupId, true );
+				}
+			} );
 		},
 
 		handleBackupDelete: function( e ) {
@@ -559,7 +748,7 @@
 			} )
 				.done( function( response ) {
 					if ( response.success ) {
-						self.renderDuplicates( response.data.groups );
+						self.renderDuplicates( response.data.groups, response.data );
 					} else {
 						self.showMessage( 'error', ( response.data && response.data.message ) || 'Scan failed.' );
 					}
@@ -568,25 +757,65 @@
 				.always( this.setLoadingState.bind( this, false ) );
 		},
 
-		renderDuplicates: function( groups ) {
+		/**
+		 * Certainty band for a score, or null when the matcher gave none.
+		 *
+		 * @param {number|null} c Certainty.
+		 * @return {string} Band label.
+		 */
+		certaintyLabel: function( c ) {
+			if ( c === null || c === undefined || isNaN( c ) ) {
+				return 'Unrated';
+			}
+			return c >= 90 ? 'High' : ( c >= 70 ? 'Medium' : 'Low' );
+		},
+
+		/**
+		 * Certainty badge class for a score.
+		 *
+		 * @param {number|null} c Certainty.
+		 * @return {string} CSS class.
+		 */
+		certaintyClass: function( c ) {
+			if ( c === null || c === undefined || isNaN( c ) ) {
+				return 'sp-certainty-low';
+			}
+			return c >= 90 ? 'sp-certainty-high' : ( c >= 70 ? 'sp-certainty-medium' : 'sp-certainty-low' );
+		},
+
+		renderDuplicates: function( groups, scan ) {
 			var $content = $( '#duplicates-content' );
+			var header = '';
+
+			// Surface how much of the roster was actually looked at, so a future
+			// overflow is visible rather than silent.
+			if ( scan && typeof scan.scanned !== 'undefined' ) {
+				// Coerced to numbers rather than escaped as strings: these are counts,
+				// so a number cannot carry markup at all. That is both more accurate
+				// than escaping and provably safe, which escaping a string only is
+				// once you trust the escaper (SonarQube jssecurity:S5696 does not).
+				var scanned = parseInt( scan.scanned, 10 ) || 0;
+				var scanTotal = parseInt( scan.total, 10 ) || 0;
+				var coverage = 'Scanned ' + scanned + ' of ' + scanTotal + ' published players.';
+				if ( scan.truncated ) {
+					header = '<p class="sp-scan-coverage sp-scan-truncated"><strong>' + coverage
+						+ ' Some players were not scanned, so duplicates among them will not appear here.</strong></p>';
+				} else {
+					header = '<p class="sp-scan-coverage">' + coverage + '</p>';
+				}
+			}
 
 			if ( ! groups || ! groups.length ) {
-				$content.html( '<p>No duplicate players found.</p>' );
+				$content.html( header + '<p>No duplicate players found.</p>' );
 				return;
 			}
 
-			var certaintyLabel = function( c ) {
-				return c >= 90 ? 'High' : ( c >= 70 ? 'Medium' : 'Low' );
-			};
-
-			var html = '<table class="sp-duplicates-table">'
-				+ '<caption class="screen-reader-text">Possible duplicate player groups with certainty scores</caption>'
-				+ '<thead><tr><th>Players</th><th style="text-align:center">Events</th><th style="text-align:center">Certainty</th><th style="text-align:center">Action</th></tr></thead><tbody>';
+			var html = header + '<table class="sp-duplicates-table">'
+				+ '<caption class="screen-reader-text">Possible duplicate player groups with certainty scores. Tick each player that belongs in the merge.</caption>'
+				+ '<thead><tr><th>Players</th><th style="text-align:center">Events</th><th style="text-align:center">Group certainty</th><th style="text-align:center">Action</th></tr></thead><tbody>';
 
 			for ( var i = 0; i < groups.length; i++ ) {
 				var g = groups[i];
-				var badgeClass = g.certainty >= 90 ? 'sp-certainty-high' : ( g.certainty >= 70 ? 'sp-certainty-medium' : 'sp-certainty-low' );
 
 				// Sort players by events descending so best primary is first.
 				var sorted = g.players.slice().sort( function( a, b ) { return b.events - a.events; } );
@@ -594,26 +823,41 @@
 				var playerList = '<ul class="sp-duplicate-group">';
 				for ( var j = 0; j < sorted.length; j++ ) {
 					var p = sorted[j];
+					var pc = ( typeof p.certainty === 'number' ) ? p.certainty : null;
+
+					// Only high-confidence members start ticked. A member the
+					// matcher could not score is treated as low confidence.
+					var checked = ( pc !== null && pc >= 90 ) ? ' checked' : '';
+					var memberJson = JSON.stringify( {
+						id: p.id, name: p.name, team: p.team || '', position: p.position || '', events: p.events, email: p.email || ''
+					} );
+					var cbId = 'sp-dup-' + this.escapeHtml( i ) + '-' + this.escapeHtml( p.id );
+
 					var meta = [];
 					if ( p.team ) { meta.push( this.escapeHtml( p.team ) ); }
 					if ( p.position ) { meta.push( this.escapeHtml( p.position ) ); }
 					if ( p.email ) { meta.push( this.escapeHtml( p.email ) ); }
 					var metaStr = meta.length ? ' (' + meta.join( ' &middot; ' ) + ')' : '';
-					playerList += '<li><a href="' + this.escapeHtml( p.edit_link ) + '">' + this.escapeHtml( p.name ) + ' #' + this.escapeHtml( p.id ) + '</a>' + metaStr
-						+ ' <small>' + this.escapeHtml( p.events ) + ' events</small></li>';
+
+					var memberBadge = '<span class="sp-certainty-badge ' + this.certaintyClass( pc ) + '">'
+						+ ( pc === null ? '' : this.escapeHtml( pc ) + '% &mdash; ' ) + this.certaintyLabel( pc ) + '</span>';
+
+					playerList += '<li>'
+						+ '<input type="checkbox" class="sp-dup-member" id="' + cbId + '" value="' + this.escapeHtml( p.id ) + '"'
+						+ ' data-player="' + this.escapeHtml( memberJson ) + '"' + checked + '>'
+						+ ' <label for="' + cbId + '">' + this.escapeHtml( p.name ) + ' #' + this.escapeHtml( p.id ) + metaStr
+						+ ' <small>' + this.escapeHtml( p.events ) + ' events</small> ' + memberBadge + '</label>'
+						+ ' <a href="' + this.escapeHtml( p.edit_link ) + '">edit</a>'
+						+ '</li>';
 				}
 				playerList += '</ul>';
-
-				// Encode full player data for Select button.
-				var playersJson = JSON.stringify( sorted.map( function( p ) {
-					return { id: p.id, name: p.name, team: p.team || '', position: p.position || '', events: p.events, email: p.email || '' };
-				} ) );
 
 				html += '<tr>'
 					+ '<td>' + playerList + '</td>'
 					+ '<td style="text-align:center">' + this.escapeHtml( sorted.reduce( function( s, p ) { return s + p.events; }, 0 ) ) + '</td>'
-					+ '<td style="text-align:center"><span class="sp-certainty-badge ' + badgeClass + '">' + this.escapeHtml( g.certainty ) + '% &mdash; ' + certaintyLabel( g.certainty ) + '</span></td>'
-					+ '<td style="text-align:center"><button type="button" class="button button-small sp-select-duplicates" data-players="' + this.escapeHtml( playersJson ) + '">Select for Merge</button></td>'
+					+ '<td style="text-align:center"><span class="sp-certainty-badge ' + this.certaintyClass( g.certainty ) + '">'
+					+ this.escapeHtml( g.certainty ) + '% &mdash; ' + this.certaintyLabel( g.certainty ) + '</span></td>'
+					+ '<td style="text-align:center"><button type="button" class="button button-small sp-select-duplicates">Select ticked for Merge</button></td>'
 					+ '</tr>';
 			}
 
@@ -626,9 +870,24 @@
 
 		handleSelectDuplicates: function( e ) {
 			e.preventDefault();
-			var players = JSON.parse( $( e.target ).closest( '.sp-select-duplicates' ).attr( 'data-players' ) );
 
-			// Players are already sorted by events descending; first = best primary.
+			// Stage only the members the operator ticked, never the whole group.
+			var players = [];
+			$( e.target ).closest( 'tr' ).find( '.sp-dup-member:checked' ).each( function() {
+				try {
+					players.push( JSON.parse( $( this ).attr( 'data-player' ) ) );
+				} catch ( err ) {
+					// Malformed row data; skip this member.
+				}
+			} );
+
+			if ( players.length < 2 ) {
+				this.showMessage( 'error', spMergeAjax.strings.selectMembers );
+				return;
+			}
+
+			// Rows render in events-descending order, so the first ticked member
+			// is the one with the most history: the best survivor.
 			var primary = players[0];
 			var duplicates = players.slice( 1 );
 
@@ -654,6 +913,12 @@
 				var dupOption = new Option( buildLabel( duplicates[i] ), duplicates[i].id, true, true );
 				$duplicates.append( dupOption ).trigger( 'change' );
 			}
+
+			this.showMessage(
+				'info',
+				'Staged ' + players.length + ' of this group: keeping ' + primary.name + ' #' + primary.id
+					+ ', merging ' + duplicates.length + ' record(s) into it. Preview before executing.'
+			);
 
 			$( 'html, body' ).animate( {
 				scrollTop: $( '#sp-merge-form' ).offset().top - 50

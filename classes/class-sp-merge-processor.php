@@ -40,6 +40,71 @@ class SP_Merge_Processor {
 	);
 
 	/**
+	 * Meta keys owned by WordPress that must never be copied between players.
+	 *
+	 * `_thumbnail_id` is deliberately part of this list: the featured image is
+	 * handled by merge_featured_image(), which only copies it when the primary
+	 * has none. Copying it here as well would leave a second `_thumbnail_id`
+	 * row on primaries that already have an image.
+	 *
+	 * @var string[]
+	 */
+	private const INTERNAL_META_KEYS = array(
+		'_edit_lock',
+		'_edit_last',
+		'_wp_old_slug',
+		'_wp_old_date',
+		'_wp_desired_post_slug',
+		'_thumbnail_id',
+		'_pingme',
+		'_encloseme',
+	);
+
+	/**
+	 * Prefixes of WordPress-internal meta keys that must never be copied.
+	 *
+	 * @var string[]
+	 */
+	private const INTERNAL_META_KEY_PREFIXES = array(
+		'_wp_trash_meta_',
+		'_oembed_',
+	);
+
+	/**
+	 * Serialized-array meta keys merged cell-by-cell by merge_array_field().
+	 *
+	 * `sp_assignments` is deliberately absent: SportsPress stores it as multiple
+	 * rows of plain "league_season_team" strings, so it belongs on the multi-row
+	 * union path in merge_meta_data().
+	 *
+	 * Public because the preview replays the same merge to show what it will
+	 * resolve, and a preview that disagreed with the merge would be worse than none.
+	 *
+	 * @var string[]
+	 */
+	public const ARRAY_MERGE_FIELDS = array( 'sp_statistics', 'sp_leagues', 'sp_metrics' );
+
+	/**
+	 * Array meta keys whose blank cell is stored as a non-positive integer.
+	 *
+	 * `sp_leagues` is `[league_id][season_id] => team_id` and SportsPress saves it
+	 * through `sp_array_value( $_POST, 'sp_leagues', array(), 'int' )`, so every
+	 * cell is an integer. Both widgets that write it post a non-positive value for
+	 * "nothing selected": the team dropdown's "None" option carries
+	 * sp_dropdown_pages()'s `option_none_value` of -1, and the season checkbox is
+	 * shadowed by a hidden -1 that survives when the box is unticked. SportsPress
+	 * reads it the same way — the player-assignments module skips every cell
+	 * matching `0 >= $team_id` when it builds sp_assignments.
+	 *
+	 * The other array fields are saved with the 'text' sanitiser, so their cells
+	 * are strings and only '' is blank: a '0' in `sp_statistics` or `sp_metrics`
+	 * is a hand-entered zero and is real data.
+	 *
+	 * @var string[]
+	 */
+	private const NON_POSITIVE_BLANK_FIELDS = array( 'sp_leagues' );
+
+	/**
 	 * Transient key used for merge locking.
 	 *
 	 * @var string
@@ -47,11 +112,39 @@ class SP_Merge_Processor {
 	private const LOCK_KEY = 'sp_merge_lock';
 
 	/**
+	 * Post IDs whose meta was written during the current merge attempt.
+	 *
+	 * Tracked so the failure path can purge them from the object cache: ROLLBACK
+	 * restores the database rows but not the values update_post_meta() already
+	 * wrote into a persistent cache.
+	 *
+	 * @var int[]
+	 */
+	private array $touched_post_ids = array();
+
+	/**
+	 * Cell-level decisions taken while deep-merging serialized array fields.
+	 *
+	 * Every entry records something the operator cannot see anywhere else: either a
+	 * value the duplicate contributed because the primary's cell was blank, or a
+	 * value the duplicate lost because the primary's cell already held something
+	 * different. Hand-entered career statistics have no other source, so a silent
+	 * decision here is unrecoverable.
+	 *
+	 * @var array<int, array{meta_key: string, duplicate_id: int, path: array, action: string, kept: mixed, discarded: mixed}>
+	 */
+	private array $merge_resolutions = array();
+
+	/**
 	 * Execute a full merge operation with transaction safety and locking.
+	 *
+	 * The backup is written as `pending` and is only promoted to `active` once the
+	 * merge has committed. A failed merge marks it `failed` — which load_backup_data()
+	 * still accepts — so the operator keeps a usable recovery point.
 	 *
 	 * @param int   $primary_id    The player ID to keep.
 	 * @param int[] $duplicate_ids Player IDs to merge and delete.
-	 * @return array{success: bool, backup_id?: string, message?: string}
+	 * @return array{success: bool, backup_id?: string, message?: string, resolutions?: array}
 	 */
 	public function execute_merge( int $primary_id, array $duplicate_ids ): array {
 		global $wpdb;
@@ -64,8 +157,10 @@ class SP_Merge_Processor {
 			);
 		}
 
-		$backup    = new SP_Merge_Backup();
-		$backup_id = null;
+		$backup                  = new SP_Merge_Backup();
+		$backup_id               = null;
+		$this->touched_post_ids  = array();
+		$this->merge_resolutions = array();
 
 		try {
 			$backup_id = $backup->create_merge_backup( $primary_id, $duplicate_ids );
@@ -98,22 +193,61 @@ class SP_Merge_Processor {
 
 			$wpdb->query( 'COMMIT' );
 
+			// Only a committed merge promotes the backup out of `pending`.
+			if ( method_exists( $backup, 'mark_active' ) ) {
+				$backup->mark_active( $backup_id );
+			}
+
 			$this->clear_sportspress_caches( $primary_id, $duplicate_ids );
 
+			$this->log_merge_resolutions( $primary_id );
+
 			return array(
-				'success'   => true,
-				'backup_id' => $backup_id,
+				'success'     => true,
+				'backup_id'   => $backup_id,
+				'resolutions' => $this->merge_resolutions,
 			);
 
-		} catch ( Exception $e ) {
+		} catch ( Throwable $e ) {
+			// Throwable, not Exception: an Error raised inside the transaction — a
+			// TypeError or ValueError from malformed legacy data, or a fatal from
+			// third-party code hooked into the meta, term or delete calls — is not
+			// an Exception in PHP 8, and letting it escape would skip the ROLLBACK.
 			$wpdb->query( 'ROLLBACK' );
 
-			if ( $backup_id ) {
-				$backup->delete_backup( $backup_id );
+			// ROLLBACK restores the rows but not the object cache: update_post_meta()
+			// has already written the merged values into Redis/Memcached, where they
+			// would keep being served and could be re-persisted by the next save.
+			$this->purge_merge_caches( $primary_id, $duplicate_ids );
+
+			// Never delete the backup here — a failed merge is precisely when it is
+			// needed. mark_failed() keeps the row loadable by load_backup_data();
+			// if the backup class predates that method the row is left untouched,
+			// which is still recoverable.
+			if ( $backup_id && method_exists( $backup, 'mark_failed' ) ) {
+				$backup->mark_failed( $backup_id );
 			}
 
 			if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-				error_log( 'SP Merge error: ' . $e->getMessage() );
+				error_log(
+					sprintf(
+						'SP Merge error: %s (backup %s retained)',
+						$e->getMessage(),
+						$backup_id ? $backup_id : 'none'
+					)
+				);
+			}
+
+			if ( $backup_id ) {
+				return array(
+					'success'   => false,
+					'backup_id' => $backup_id,
+					'message'   => sprintf(
+						/* translators: %s: retained backup ID */
+						__( 'Merge failed and was rolled back. Backup %s has been retained — use it to verify or restore the affected records before retrying.', 'sportspress-player-merge' ),
+						$backup_id
+					),
+				);
 			}
 
 			return array(
@@ -207,6 +341,10 @@ class SP_Merge_Processor {
 	/**
 	 * Merge player meta data intelligently.
 	 *
+	 * Every key on the duplicate is considered except WordPress internals — third
+	 * party fields such as `spt_email`, `spt_skill` and `spt_captain` carry real
+	 * data and were previously discarded by an `sp_`-only allow-list.
+	 *
 	 * @param int $primary_id   Primary player ID.
 	 * @param int $duplicate_id Duplicate player ID.
 	 * @throws Exception On failure.
@@ -214,11 +352,13 @@ class SP_Merge_Processor {
 	private function merge_meta_data( int $primary_id, int $duplicate_id ): void {
 		$duplicate_meta = get_post_meta( $duplicate_id );
 
-		$skip_fields        = array( 'sp_columns', 'sp_number' );
-		$array_merge_fields = array( 'sp_statistics', 'sp_leagues', 'sp_assignments', 'sp_metrics' );
+		$skip_fields = array( 'sp_columns', 'sp_number' );
+
+		// Serialized-array fields only; see the constant for why sp_assignments is not one.
+		$array_merge_fields = self::ARRAY_MERGE_FIELDS;
 
 		foreach ( $duplicate_meta as $key => $values ) {
-			if ( 0 !== strpos( $key, 'sp_' ) ) {
+			if ( $this->is_internal_meta_key( $key ) ) {
 				continue;
 			}
 
@@ -232,6 +372,16 @@ class SP_Merge_Processor {
 			}
 
 			$existing = get_post_meta( $primary_id, $key );
+
+			/*
+			 * Non-SportsPress fields are single-valued by convention, so they only
+			 * fill a gap on the primary. Unioning them would leave the primary with
+			 * two competing values (two `spt_email` rows, for example).
+			 */
+			if ( 0 !== strpos( $key, 'sp_' ) && ! empty( $existing ) ) {
+				continue;
+			}
+
 			foreach ( $values as $value ) {
 				if ( ! in_array( $value, $existing, true ) ) {
 					add_post_meta( $primary_id, $key, $value );
@@ -240,6 +390,26 @@ class SP_Merge_Processor {
 		}
 
 		$this->deduplicate_multi_value_meta( $primary_id );
+	}
+
+	/**
+	 * Check whether a meta key belongs to WordPress itself and must not be copied.
+	 *
+	 * @param string $key Meta key.
+	 * @return bool True when the key is a WordPress internal.
+	 */
+	private function is_internal_meta_key( string $key ): bool {
+		if ( in_array( $key, self::INTERNAL_META_KEYS, true ) ) {
+			return true;
+		}
+
+		foreach ( self::INTERNAL_META_KEY_PREFIXES as $prefix ) {
+			if ( 0 === strpos( $key, $prefix ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -262,34 +432,252 @@ class SP_Merge_Processor {
 			return;
 		}
 
-		$merged = $this->deep_merge_arrays( $primary_value, $duplicate_value );
+		$merged = $this->deep_merge_arrays(
+			$primary_value,
+			$duplicate_value,
+			array(
+				'meta_key'     => $key,
+				'duplicate_id' => $duplicate_id,
+			)
+		);
 		update_post_meta( $primary_id, $key, $merged );
 	}
 
 	/**
-	 * Deep merge two arrays. Primary values take precedence for scalar values.
+	 * Deep merge two arrays. Primary values take precedence for scalar values,
+	 * but only where the primary actually holds one.
 	 * Numerically-indexed arrays are appended (array_merge) to preserve all entries.
 	 * Associative arrays are recursed.
 	 *
+	 * The merge context travels with the recursion because emptiness is
+	 * field-specific: a 0 is a blank in `sp_leagues` and real data in
+	 * `sp_statistics`, and the recursion is the only place that knows which cell
+	 * it is looking at.
+	 *
 	 * @param array $primary   Primary array.
 	 * @param array $duplicate Duplicate array.
+	 * @param array $context   Merge context: `meta_key` and `duplicate_id`.
+	 * @param array $path      Keys walked so far, used to identify a resolved cell.
 	 * @return array Merged array.
 	 */
-	private function deep_merge_arrays( array $primary, array $duplicate ): array {
+	private function deep_merge_arrays( array $primary, array $duplicate, array $context, array $path = array() ): array {
 		foreach ( $duplicate as $key => $value ) {
+			$key_path = array_merge( $path, array( $key ) );
+
 			if ( ! isset( $primary[ $key ] ) ) {
 				$primary[ $key ] = $value;
-			} elseif ( is_array( $value ) && is_array( $primary[ $key ] ) ) {
+				continue;
+			}
+
+			if ( is_array( $value ) && is_array( $primary[ $key ] ) ) {
 				// Numerically-indexed arrays (e.g., timeline minutes): append all values.
 				if ( $this->is_numeric_indexed( $value ) && $this->is_numeric_indexed( $primary[ $key ] ) ) {
 					$primary[ $key ] = array_values( array_unique( array_merge( $primary[ $key ], $value ) ) );
 				} else {
-					$primary[ $key ] = $this->deep_merge_arrays( $primary[ $key ], $value );
+					$primary[ $key ] = $this->deep_merge_arrays( $primary[ $key ], $value, $context, $key_path );
 				}
+				continue;
 			}
-			// Scalar conflict: primary wins.
+
+			/*
+			 * Scalar cell. SportsPress posts a value for every rendered cell, blanks
+			 * included, so the primary nearly always has an entry and isset() alone
+			 * let a blank primary cell silently beat a real value on the duplicate.
+			 * The primary therefore only wins when its cell actually holds something.
+			 */
+			if ( $this->is_blank_cell( $context['meta_key'], $primary[ $key ] ) ) {
+				if ( $this->is_blank_cell( $context['meta_key'], $value ) ) {
+					continue;
+				}
+
+				$this->record_resolution( $context, $key_path, 'filled', $value, $primary[ $key ] );
+				$primary[ $key ] = $value;
+				continue;
+			}
+
+			if ( $this->is_blank_cell( $context['meta_key'], $value ) || $this->values_match( $primary[ $key ], $value ) ) {
+				continue;
+			}
+
+			// Both cells hold a value and they differ: a real conflict, primary wins.
+			$this->record_resolution( $context, $key_path, 'conflict', $primary[ $key ], $value );
 		}
+
 		return $primary;
+	}
+
+	/**
+	 * Whether a scalar cell counts as blank for the field it belongs to.
+	 *
+	 * A single rule cannot serve every field: `0` means "no team selected" in
+	 * `sp_leagues` and "the operator typed a zero" in `sp_statistics`. See
+	 * self::NON_POSITIVE_BLANK_FIELDS for where each convention comes from.
+	 *
+	 * @param string $meta_key Meta key being merged.
+	 * @param mixed  $value    Cell value.
+	 * @return bool True when the cell holds nothing.
+	 */
+	private function is_blank_cell( string $meta_key, $value ): bool {
+		if ( null === $value || '' === $value ) {
+			return true;
+		}
+
+		if ( is_array( $value ) ) {
+			return array() === $value;
+		}
+
+		if ( in_array( $meta_key, self::NON_POSITIVE_BLANK_FIELDS, true ) ) {
+			return is_numeric( $value ) && (int) $value <= 0;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Whether two cells hold the same value.
+	 *
+	 * Compared as strings when both are scalar: `sp_leagues` is stored as integers
+	 * and `sp_statistics` as strings, and a legacy row that mixes 1 with '1' is the
+	 * same team, not a conflict worth reporting.
+	 *
+	 * @param mixed $primary   Primary cell.
+	 * @param mixed $duplicate Duplicate cell.
+	 * @return bool True when the two are equivalent.
+	 */
+	private function values_match( $primary, $duplicate ): bool {
+		if ( is_scalar( $primary ) && is_scalar( $duplicate ) ) {
+			return (string) $primary === (string) $duplicate;
+		}
+
+		return $primary === $duplicate;
+	}
+
+	/**
+	 * Record a cell-level decision for the caller and the log.
+	 *
+	 * @param array  $context   Merge context: `meta_key` and `duplicate_id`.
+	 * @param array  $path      Keys identifying the cell.
+	 * @param string $action    Either `filled` (duplicate's value used) or `conflict` (duplicate's value discarded).
+	 * @param mixed  $kept      Value that survives the merge.
+	 * @param mixed  $discarded Value that does not.
+	 */
+	private function record_resolution( array $context, array $path, string $action, $kept, $discarded ): void {
+		$this->merge_resolutions[] = array(
+			'meta_key'     => (string) $context['meta_key'],
+			'duplicate_id' => (int) ( $context['duplicate_id'] ?? 0 ),
+			'path'         => $path,
+			'action'       => $action,
+			'kept'         => $kept,
+			'discarded'    => $discarded,
+		);
+	}
+
+	/**
+	 * Cell-level decisions taken by the last merge run on this instance.
+	 *
+	 * @return array<int, array{meta_key: string, duplicate_id: int, path: array, action: string, kept: mixed, discarded: mixed}>
+	 */
+	public function get_merge_resolutions(): array {
+		return $this->merge_resolutions;
+	}
+
+	/**
+	 * Dry-run the deep merge of one array field and report what it would resolve.
+	 *
+	 * Runs the real merge code against copies so the preview can never disagree
+	 * with the merge, and writes nothing: deep_merge_arrays() only reads. The
+	 * merged array comes back so a caller previewing several duplicates can feed
+	 * each result into the next call, exactly as execute_merge() does.
+	 *
+	 * @param string $meta_key        Meta key being merged.
+	 * @param array  $primary_value   Primary player's stored array.
+	 * @param array  $duplicate_value Duplicate player's stored array.
+	 * @param int    $duplicate_id    Duplicate player ID, for labelling.
+	 * @return array{merged: array, resolutions: array}
+	 */
+	public function preview_array_field_merge( string $meta_key, array $primary_value, array $duplicate_value, int $duplicate_id = 0 ): array {
+		$saved                   = $this->merge_resolutions;
+		$this->merge_resolutions = array();
+
+		$merged = $this->deep_merge_arrays(
+			$primary_value,
+			$duplicate_value,
+			array(
+				'meta_key'     => $meta_key,
+				'duplicate_id' => $duplicate_id,
+			)
+		);
+
+		$resolutions             = $this->merge_resolutions;
+		$this->merge_resolutions = $saved;
+
+		return array(
+			'merged'      => $merged,
+			'resolutions' => $resolutions,
+		);
+	}
+
+	/**
+	 * Render a resolved cell as `sp_statistics[12][34][goals]`.
+	 *
+	 * @param array $resolution One entry from get_merge_resolutions().
+	 * @return string Cell address.
+	 */
+	public static function format_resolution_path( array $resolution ): string {
+		$path = '';
+
+		foreach ( (array) $resolution['path'] as $segment ) {
+			$path .= '[' . ( is_scalar( $segment ) ? (string) $segment : '?' ) . ']';
+		}
+
+		return $resolution['meta_key'] . $path;
+	}
+
+	/**
+	 * Render a resolved cell's value for a log line or the preview.
+	 *
+	 * @param mixed $value Cell value.
+	 * @return string Printable value.
+	 */
+	public static function format_resolution_value( $value ): string {
+		if ( null === $value ) {
+			return '';
+		}
+
+		if ( is_scalar( $value ) ) {
+			return (string) $value;
+		}
+
+		return '(' . gettype( $value ) . ')';
+	}
+
+	/**
+	 * Log every cell-level decision so an operator can audit a completed merge.
+	 *
+	 * @param int $primary_id Primary player ID.
+	 */
+	private function log_merge_resolutions( int $primary_id ): void {
+		if ( empty( $this->merge_resolutions ) ) {
+			return;
+		}
+
+		if ( ! defined( 'WP_DEBUG' ) || ! WP_DEBUG ) {
+			return;
+		}
+
+		foreach ( $this->merge_resolutions as $resolution ) {
+			error_log(
+				sprintf(
+					'SP Merge %s: player %d, duplicate %d, %s kept "%s", discarded "%s"',
+					'conflict' === $resolution['action'] ? 'conflict resolved' : 'gap filled',
+					$primary_id,
+					$resolution['duplicate_id'],
+					self::format_resolution_path( $resolution ),
+					self::format_resolution_value( $resolution['kept'] ),
+					self::format_resolution_value( $resolution['discarded'] )
+				)
+			);
+		}
 	}
 
 	/**
@@ -372,8 +760,9 @@ class SP_Merge_Processor {
 	 * Update serialized event meta that contains player IDs as array keys.
 	 * Uses additive merging for same-event collisions (sums numeric stats).
 	 *
-	 * @param int $primary_id   Primary player ID.
-	 * @param int $duplicate_id Duplicate player ID.
+	 * @param int   $primary_id   Primary player ID.
+	 * @param int   $duplicate_id Duplicate player ID.
+	 * @param int[] $event_ids    Event IDs collected before the simple meta update.
 	 */
 	private function update_serialized_event_meta( int $primary_id, int $duplicate_id, array $event_ids = array() ): void {
 		if ( empty( $event_ids ) ) {
@@ -384,7 +773,8 @@ class SP_Merge_Processor {
 		update_postmeta_cache( array_map( 'intval', $event_ids ) );
 
 		foreach ( $event_ids as $event_id ) {
-			$event_id = (int) $event_id;
+			$event_id                 = (int) $event_id;
+			$this->touched_post_ids[] = $event_id;
 
 			foreach ( self::SERIALIZED_PLAYER_META_KEYS as $meta_key ) {
 				$raw = get_post_meta( $event_id, $meta_key, true );
@@ -544,7 +934,8 @@ class SP_Merge_Processor {
 		}
 
 		foreach ( $list_ids as $list_id ) {
-			$list_id = (int) $list_id;
+			$list_id                  = (int) $list_id;
+			$this->touched_post_ids[] = $list_id;
 
 			// Update simple sp_player meta rows.
 			$wpdb->update(
@@ -608,5 +999,37 @@ class SP_Merge_Processor {
 		 * @param int[] $duplicate_ids The merged (deleted) player IDs.
 		 */
 		do_action( 'sp_merge_after_merge', $primary_id, $duplicate_ids );
+	}
+
+	/**
+	 * Purge object-cache entries written during a merge that was rolled back.
+	 *
+	 * Covers the primary, every duplicate, and every event or list post whose meta
+	 * was rewritten before the failure. Without this a persistent object cache keeps
+	 * serving the merged values that no longer exist in the database.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 */
+	private function purge_merge_caches( int $primary_id, array $duplicate_ids ): void {
+		$post_ids = array_merge(
+			array( $primary_id ),
+			array_map( 'intval', $duplicate_ids ),
+			$this->touched_post_ids
+		);
+
+		foreach ( array_unique( $post_ids ) as $post_id ) {
+			$post_id = (int) $post_id;
+
+			// clean_post_cache() bails when the post row cannot be read, so the meta
+			// cache is dropped explicitly first.
+			wp_cache_delete( $post_id, 'post_meta' );
+			clean_post_cache( $post_id );
+
+			delete_transient( 'sp_player_data_' . $post_id );
+			delete_transient( 'sp_event_data_' . $post_id );
+		}
+
+		$this->touched_post_ids = array();
 	}
 }

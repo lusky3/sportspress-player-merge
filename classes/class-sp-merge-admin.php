@@ -17,6 +17,22 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SP_Merge_Admin {
 
 	/**
+	 * How many backups the admin page lists.
+	 *
+	 * A single run of this tool is 35 merges; a ten-row list made every backup
+	 * before the last ten unreachable from the UI.
+	 */
+	private const MAX_LISTED_BACKUPS = 200;
+
+	/**
+	 * Backup statuses whose rows may still be reverted.
+	 *
+	 * Mirrors SP_Merge_Backup::LOADABLE_STATUSES — a 'reverted' row cannot be
+	 * loaded, so offering its Revert button only produces "Backup data not found".
+	 */
+	private const REVERTABLE_STATUSES = array( 'pending', 'active', 'failed' );
+
+	/**
 	 * Register the admin submenu page.
 	 */
 	public function add_admin_menu(): void {
@@ -31,6 +47,33 @@ class SP_Merge_Admin {
 	}
 
 	/**
+	 * Resolve the filename suffix for a bundled asset.
+	 *
+	 * Minified assets are produced by the release workflow and are deliberately
+	 * NOT committed, so a git-cloned install — or one updated from the GitHub
+	 * source zipball rather than the built release asset — has no
+	 * `admin.min.js`. Enqueuing it regardless returned a 404: Select2 never
+	 * initialised, both player dropdowns stayed empty (they are populated only
+	 * over AJAX) and every control on the page was inert, with no error shown.
+	 *
+	 * Prefer the minified file when it is actually present, and fall back to the
+	 * unminified source otherwise, so the tool works from any install method.
+	 *
+	 * @param string $relative_path Path under assets/, without extension.
+	 * @param string $extension     File extension, without the dot.
+	 * @return string Either '.min' or an empty string.
+	 */
+	private static function asset_suffix( string $relative_path, string $extension ): string {
+		if ( defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ) {
+			return '';
+		}
+
+		$minified = SP_MERGE_PLUGIN_PATH . "assets/{$relative_path}.min.{$extension}";
+
+		return file_exists( $minified ) ? '.min' : '';
+	}
+
+	/**
 	 * Enqueue admin scripts and styles on the merge page only.
 	 *
 	 * @param string $hook_suffix Current admin page hook suffix.
@@ -40,11 +83,12 @@ class SP_Merge_Admin {
 			return;
 		}
 
-		$suffix = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
+		$css_suffix = self::asset_suffix( 'css/admin', 'css' );
+		$js_suffix  = self::asset_suffix( 'js/admin', 'js' );
 
 		wp_enqueue_style(
 			'sp-merge-admin-css',
-			SP_MERGE_PLUGIN_URL . "assets/css/admin{$suffix}.css",
+			SP_MERGE_PLUGIN_URL . "assets/css/admin{$css_suffix}.css",
 			array(),
 			SP_MERGE_VERSION
 		);
@@ -67,7 +111,7 @@ class SP_Merge_Admin {
 
 		wp_enqueue_script(
 			'sp-merge-admin-js',
-			SP_MERGE_PLUGIN_URL . "assets/js/admin{$suffix}.js",
+			SP_MERGE_PLUGIN_URL . "assets/js/admin{$js_suffix}.js",
 			array( 'jquery', 'sp-merge-select2-js' ),
 			SP_MERGE_VERSION,
 			true
@@ -137,9 +181,10 @@ class SP_Merge_Admin {
 	/**
 	 * Get recent backups for the current user.
 	 *
+	 * @param int $limit Maximum rows to return.
 	 * @return array[]|false Backups or false on error.
 	 */
-	public function get_recent_backups(): array|false {
+	public function get_recent_backups( int $limit = self::MAX_LISTED_BACKUPS ): array|false {
 		global $wpdb;
 
 		$table_name = $wpdb->prefix . 'sp_merge_backups';
@@ -153,16 +198,24 @@ class SP_Merge_Admin {
 			return array();
 		}
 
+		// The status column arrives with the backup class's schema upgrade,
+		// which a page load may not have run yet.
+		$columns    = (array) $wpdb->get_col( "SHOW COLUMNS FROM {$table_name}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$status_sql = in_array( 'status', $columns, true ) ? "COALESCE(status, 'active')" : "'active'";
+		$limit      = max( 1, min( self::MAX_LISTED_BACKUPS, $limit ) );
+
 		$results = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT backup_id, user_id, created_at,
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				"SELECT backup_id, user_id, created_at, {$status_sql} AS status,
 						JSON_EXTRACT(backup_data, '$.primary_name') as primary_name,
 						JSON_EXTRACT(backup_data, '$.duplicate_names') as duplicate_names
 				 FROM {$table_name}
 				 WHERE user_id = %d
 				 ORDER BY created_at DESC
-				 LIMIT 10",
-				get_current_user_id()
+				 LIMIT %d",
+				get_current_user_id(),
+				$limit
 			)
 		);
 
@@ -179,12 +232,83 @@ class SP_Merge_Admin {
 			$backups[] = array(
 				'id'              => $row->backup_id,
 				'date'            => mysql2date( 'M j, Y g:i A', $row->created_at ),
+				'status'          => (string) ( $row->status ?? 'active' ),
 				'primary_name'    => json_decode( $row->primary_name, true ) ?? __( 'Unknown', 'sportspress-player-merge' ),
 				'duplicate_names' => json_decode( $row->duplicate_names, true ) ?? array(),
 			);
 		}
 
 		return $backups;
+	}
+
+	/**
+	 * Describe a backup status for the operator.
+	 *
+	 * @param string $status Stored status.
+	 * @return array{label: string, hint: string} Badge text and what to do about it.
+	 */
+	public function get_status_meta( string $status ): array {
+		switch ( $status ) {
+			case 'pending':
+				return array(
+					'label' => __( 'Interrupted', 'sportspress-player-merge' ),
+					'hint'  => __( 'The merge never confirmed it finished. Check this player before merging anything else.', 'sportspress-player-merge' ),
+				);
+			case 'failed':
+				return array(
+					'label' => __( 'Merge failed', 'sportspress-player-merge' ),
+					'hint'  => __( 'The merge threw partway through. Verify the player, and revert if anything was left half-applied.', 'sportspress-player-merge' ),
+				);
+			case 'reverted':
+				return array(
+					'label' => __( 'Reverted', 'sportspress-player-merge' ),
+					'hint'  => __( 'Already reverted. Nothing left to restore from this backup.', 'sportspress-player-merge' ),
+				);
+			default:
+				return array(
+					'label' => __( 'Merged', 'sportspress-player-merge' ),
+					'hint'  => '',
+				);
+		}
+	}
+
+	/**
+	 * Render one backup row.
+	 *
+	 * Shared by the admin page template and the AJAX refresh so the two surfaces
+	 * cannot drift apart on status, escaping or which controls are offered.
+	 *
+	 * @param array $backup One row from get_recent_backups().
+	 */
+	public function render_backup_item( array $backup ): void {
+		$backup_id  = (string) ( $backup['id'] ?? '' );
+		$status     = (string) ( $backup['status'] ?? 'active' );
+		$meta       = $this->get_status_meta( $status );
+		$revertable = in_array( $status, self::REVERTABLE_STATUSES, true );
+		$duplicates = is_array( $backup['duplicate_names'] ?? null ) ? $backup['duplicate_names'] : array();
+		?>
+		<div class="sp-backup-item sp-backup-status-<?php echo esc_attr( $status ); ?>">
+			<input type="checkbox" class="backup-checkbox" value="<?php echo esc_attr( $backup_id ); ?>" id="backup-<?php echo esc_attr( $backup_id ); ?>">
+			<label for="backup-<?php echo esc_attr( $backup_id ); ?>">
+				<strong><?php echo esc_html( (string) ( $backup['primary_name'] ?? '' ) ); ?></strong> &larr; <?php echo esc_html( implode( ', ', $duplicates ) ); ?>
+				<span class="sp-backup-status sp-backup-status-badge-<?php echo esc_attr( $status ); ?>"><?php echo esc_html( $meta['label'] ); ?></span>
+				<?php if ( '' !== $meta['hint'] ) : ?>
+					<span class="sp-backup-hint"><?php echo esc_html( $meta['hint'] ); ?></span>
+				<?php endif; ?>
+			</label>
+			<span class="sp-backup-date"><?php echo esc_html( (string) ( $backup['date'] ?? '' ) ); ?></span>
+			<div class="sp-backup-buttons">
+				<?php if ( $revertable ) : ?>
+					<button type="button" class="button button-secondary sp-revert-backup" data-backup-id="<?php echo esc_attr( $backup_id ); ?>">
+						<span class="dashicons dashicons-undo"></span> <?php esc_html_e( 'Revert', 'sportspress-player-merge' ); ?>
+					</button>
+				<?php endif; ?>
+				<button type="button" class="button button-secondary sp-delete-backup" data-backup-id="<?php echo esc_attr( $backup_id ); ?>">
+					<span class="dashicons dashicons-trash"></span> <?php esc_html_e( 'Delete', 'sportspress-player-merge' ); ?>
+				</button>
+			</div>
+		</div>
+		<?php
 	}
 
 	/**
@@ -200,6 +324,10 @@ class SP_Merge_Admin {
 			'mergeSuccess'  => __( 'Players merged successfully!', 'sportspress-player-merge' ),
 			'revertSuccess' => __( 'Merge reverted successfully!', 'sportspress-player-merge' ),
 			'noMergeData'   => __( 'No recent merge data found to revert.', 'sportspress-player-merge' ),
+			'previewStale'  => __( 'Selection changed, so the preview no longer applies. Preview again before executing.', 'sportspress-player-merge' ),
+			'overrideLabel' => __( 'Override and revert anyway', 'sportspress-player-merge' ),
+			'overrideIntro' => __( 'Override the safety check and revert this merge? Everything listed below was written AFTER the merge and will be permanently discarded:', 'sportspress-player-merge' ),
+			'selectMembers' => __( 'Select at least two players from this group to merge.', 'sportspress-player-merge' ),
 		);
 	}
 }

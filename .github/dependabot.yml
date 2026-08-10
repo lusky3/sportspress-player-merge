@@ -1,5 +1,9 @@
 version: 2
-
+# Every GitHub Action here is pinned to a full commit SHA with a trailing
+# `# vX.Y.Z` comment. Dependabot reads that comment and bumps both the SHA and
+# the comment on the cadence below, so pinning stays current without anyone
+# looking SHAs up by hand. Do not "simplify" those back to moving tags — a tag
+# can be repointed at new code after review (Sonar githubactions:S7637).
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"

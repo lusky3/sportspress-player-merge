@@ -58,6 +58,10 @@ class SportsPress_Player_Merge_Init {
 
 	/**
 	 * Create backup table for storing merge data.
+	 *
+	 * Keep the column list in step with SP_Merge_Backup::maybe_upgrade_schema(),
+	 * which brings existing installs forward; columns listed here let a fresh
+	 * install skip that ALTER path entirely.
 	 */
 	private function create_backup_table(): void {
 		global $wpdb;
@@ -72,6 +76,8 @@ class SportsPress_Player_Merge_Init {
 			backup_data longtext NOT NULL,
 			created_at datetime NOT NULL,
 			status varchar(20) NOT NULL DEFAULT 'active',
+			touched_posts longtext NULL DEFAULT NULL,
+			post_hashes longtext NULL DEFAULT NULL,
 			PRIMARY KEY (id),
 			KEY backup_id (backup_id),
 			KEY user_id (user_id),
@@ -90,9 +96,16 @@ class SportsPress_Player_Merge_Init {
 			return;
 		}
 
-		// GitHub updater runs regardless of SportsPress status.
+		/*
+		 * GitHub updater runs regardless of SportsPress status, unless the
+		 * deployment has frozen it. This plugin permanently deletes posts, so an
+		 * operator working through a batch of merges may not want the code
+		 * changing underneath them: define SP_MERGE_DISABLE_UPDATER as true in
+		 * wp-config.php and no update check, no update offer and no self-install
+		 * can happen.
+		 */
 		$updater_path = SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-github-updater.php';
-		if ( file_exists( $updater_path ) ) {
+		if ( file_exists( $updater_path ) && ( ! defined( 'SP_MERGE_DISABLE_UPDATER' ) || ! SP_MERGE_DISABLE_UPDATER ) ) {
 			require_once $updater_path;
 			$GLOBALS['sp_merge_updater'] = new SP_Merge_GitHub_Updater( SP_MERGE_PLUGIN_FILE, SP_MERGE_VERSION );
 		}

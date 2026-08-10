@@ -643,3 +643,120 @@ button[disabled][title]:hover::before {
 .sp-merge-card.sp-drag-over {
     border-top: 3px solid #2271b1;
 }
+
+/* Backup status */
+.sp-backup-count {
+    margin-left: 8px;
+    color: #646970;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.sp-backup-status {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    background: #e9ecef;
+    color: #495057;
+}
+
+.sp-backup-status-badge-active {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.sp-backup-status-badge-pending {
+    background: #fff3cd;
+    color: #664d03;
+}
+
+.sp-backup-status-badge-failed {
+    background: #f8d7da;
+    color: #842029;
+}
+
+.sp-backup-status-badge-reverted {
+    background: #e9ecef;
+    color: #6c757d;
+}
+
+.sp-backup-hint {
+    display: block;
+    margin-top: 2px;
+    color: #646970;
+    font-size: 12px;
+}
+
+/* The two states an operator has to act on. */
+.sp-backup-item.sp-backup-status-pending {
+    border-left: 4px solid #dba617;
+    padding-left: 8px;
+    background: #fffbf0;
+}
+
+.sp-backup-item.sp-backup-status-failed {
+    border-left: 4px solid #d63638;
+    padding-left: 8px;
+    background: #fdf3f4;
+}
+
+.sp-backup-item.sp-backup-status-reverted {
+    opacity: 0.65;
+}
+
+/* Preview warnings and revert override */
+.sp-preview-warnings {
+    margin: 0 0 16px;
+    padding: 12px 16px;
+    border-left: 4px solid #dba617;
+    background: #fffbf0;
+    color: #664d03;
+}
+
+.sp-preview-warnings ul {
+    margin: 6px 0 0 18px;
+    list-style: disc;
+}
+
+.sp-force-revert-wrap {
+    margin-top: 10px;
+}
+
+.sp-confirm-details {
+    margin: 10px 0 16px 18px;
+    list-style: disc;
+    max-height: 240px;
+    overflow-y: auto;
+    text-align: left;
+}
+
+.sp-confirm-details li {
+    margin-bottom: 4px;
+}
+
+/* Duplicate scan */
+.sp-scan-coverage {
+    margin: 0 0 12px;
+    color: #646970;
+    font-size: 13px;
+}
+
+.sp-scan-coverage.sp-scan-truncated {
+    padding: 10px 14px;
+    border-left: 4px solid #d63638;
+    background: #fdf3f4;
+    color: #842029;
+}
+
+.sp-duplicate-group li label {
+    cursor: pointer;
+}
+
+.sp-duplicate-group li input[type="checkbox"] {
+    margin: 0 4px 0 0;
+}

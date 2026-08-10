@@ -17,6 +17,22 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SP_Merge_Ajax {
 
 	/**
+	 * Hard ceiling on the number of players a single scan will load.
+	 */
+	private const MAX_SCAN_PLAYERS = 10000;
+
+	/**
+	 * Players fetched per scan page.
+	 */
+	private const SCAN_PAGE_SIZE = 500;
+
+	/**
+	 * A duplicate carrying at least this multiple of the primary's event count
+	 * makes the survivor choice worth questioning.
+	 */
+	private const HISTORY_WARNING_RATIO = 2;
+
+	/**
 	 * Handle preview merge request.
 	 */
 	public function preview_merge(): void {
@@ -32,8 +48,16 @@ class SP_Merge_Ajax {
 		try {
 			$preview      = new SP_Merge_Preview();
 			$preview_data = $preview->generate( $input['primary_id'], $input['duplicate_ids'] );
-			wp_send_json_success( array( 'preview' => $preview_data ) );
-		} catch ( Exception $e ) {
+
+			wp_send_json_success(
+				array(
+					'preview'  => $preview_data,
+					// Binds the execution that follows to exactly this selection.
+					'token'    => self::selection_token( $input['primary_id'], $input['duplicate_ids'] ),
+					'warnings' => $this->survivor_warnings( $input['primary_id'], $input['duplicate_ids'] ),
+				)
+			);
+		} catch ( Throwable $e ) {
 			$this->send_error( __( 'Preview generation failed', 'sportspress-player-merge' ) );
 		}
 	}
@@ -51,6 +75,10 @@ class SP_Merge_Ajax {
 			return;
 		}
 
+		if ( ! $this->verify_preview_token( $input['primary_id'], $input['duplicate_ids'] ) ) {
+			return;
+		}
+
 		try {
 			$processor = new SP_Merge_Processor();
 			$result    = $processor->execute_merge( $input['primary_id'], $input['duplicate_ids'] );
@@ -65,13 +93,18 @@ class SP_Merge_Ajax {
 			} else {
 				$this->send_error( $result['message'] ?? __( 'Merge failed', 'sportspress-player-merge' ) );
 			}
-		} catch ( Exception $e ) {
+		} catch ( Throwable $e ) {
 			$this->send_error( __( 'Merge operation failed', 'sportspress-player-merge' ) );
 		}
 	}
 
 	/**
 	 * Handle revert merge request.
+	 *
+	 * A revert is attempted unforced first. When the backup class refuses
+	 * because values changed after the merge, the refusal is returned with
+	 * force_offered so the UI can present the override as a second, separately
+	 * confirmed step. The override is never the default and never implicit.
 	 */
 	public function revert_merge(): void {
 		if ( ! $this->validate_write_request() ) {
@@ -83,16 +116,31 @@ class SP_Merge_Ajax {
 			return;
 		}
 
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in validate_write_request
+		$force = isset( $_POST['force'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['force'] ) );
+
 		try {
 			$backup = new SP_Merge_Backup();
-			$result = $backup->revert( $backup_id );
+			$result = $backup->revert( $backup_id, $force );
 
 			if ( $result['success'] ) {
-				wp_send_json_success( array( 'message' => __( 'Merge reverted successfully', 'sportspress-player-merge' ) ) );
+				wp_send_json_success(
+					array(
+						'message' => $force
+							? __( 'Merge reverted using the override. Values changed since the merge were discarded.', 'sportspress-player-merge' )
+							: __( 'Merge reverted successfully', 'sportspress-player-merge' ),
+					)
+				);
 			} else {
-				$this->send_error( $result['message'] ?? __( 'Revert failed', 'sportspress-player-merge' ) );
+				$this->send_error(
+					$result['message'] ?? __( 'Revert failed', 'sportspress-player-merge' ),
+					array(
+						'backup_id'     => $backup_id,
+						'force_offered' => ! $force && 'values_changed' === ( $result['code'] ?? '' ),
+					)
+				);
 			}
-		} catch ( Exception $e ) {
+		} catch ( Throwable $e ) {
 			$this->send_error( __( 'Revert operation failed', 'sportspress-player-merge' ) );
 		}
 	}
@@ -129,7 +177,7 @@ class SP_Merge_Ajax {
 					),
 				)
 			);
-		} catch ( Exception $e ) {
+		} catch ( Throwable $e ) {
 			$this->send_error( __( 'Delete operation failed', 'sportspress-player-merge' ) );
 		}
 	}
@@ -152,29 +200,15 @@ class SP_Merge_Ajax {
 			}
 
 			ob_start();
-			if ( ! empty( $recent_backups ) ) {
-				foreach ( $recent_backups as $backup ) {
-					echo '<div class="sp-backup-item">';
-					echo '<input type="checkbox" class="backup-checkbox" value="' . esc_attr( $backup['id'] ) . '" id="backup-' . esc_attr( $backup['id'] ) . '">';
-					echo '<label for="backup-' . esc_attr( $backup['id'] ) . '">';
-					echo '<strong>' . esc_html( $backup['primary_name'] ) . '</strong> &larr; ' . esc_html( implode( ', ', $backup['duplicate_names'] ) );
-					echo '</label>';
-					echo '<span class="sp-backup-date">' . esc_html( $backup['date'] ) . '</span>';
-					echo '<div class="sp-backup-buttons">';
-					echo '<button type="button" class="button button-secondary sp-revert-backup" data-backup-id="' . esc_attr( $backup['id'] ) . '">';
-					echo '<span class="dashicons dashicons-undo"></span> ' . esc_html__( 'Revert', 'sportspress-player-merge' );
-					echo '</button>';
-					echo '<button type="button" class="button button-secondary sp-delete-backup" data-backup-id="' . esc_attr( $backup['id'] ) . '">';
-					echo '<span class="dashicons dashicons-trash"></span> ' . esc_html__( 'Delete', 'sportspress-player-merge' );
-					echo '</button>';
-					echo '</div>';
-					echo '</div>';
-				}
+			// Rendered by the admin class so this markup and the admin page's
+			// initial render cannot drift apart on status or escaping.
+			foreach ( $recent_backups as $backup ) {
+				$admin->render_backup_item( $backup );
 			}
 			$html = ob_get_clean();
 
 			wp_send_json_success( array( 'html' => $html ) );
-		} catch ( Exception $e ) {
+		} catch ( Throwable $e ) {
 			$this->send_error( __( 'Failed to load backups', 'sportspress-player-merge' ) );
 		}
 	}
@@ -231,6 +265,119 @@ class SP_Merge_Ajax {
 			'primary_id'    => $primary_id,
 			'duplicate_ids' => $duplicate_ids,
 		);
+	}
+
+	/**
+	 * Derive the token that binds an execution to the preview that approved it.
+	 *
+	 * The token covers the primary and the *set* of duplicates, so re-ordering
+	 * the POST still verifies while swapping either side does not. Stateless by
+	 * design: nothing to expire, store or clean up.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return string
+	 */
+	public static function selection_token( int $primary_id, array $duplicate_ids ): string {
+		$ids = array_values( array_unique( array_map( 'intval', $duplicate_ids ) ) );
+		sort( $ids, SORT_NUMERIC );
+
+		return wp_hash( 'sp_merge_selection|' . $primary_id . '|' . implode( ',', $ids ) );
+	}
+
+	/**
+	 * Require a preview token matching the selection being executed.
+	 *
+	 * Without this a stale preview card and a changed dropdown can execute a
+	 * merge the operator never previewed.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return bool True when the token matches.
+	 */
+	private function verify_preview_token( int $primary_id, array $duplicate_ids ): bool {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in validate_write_request
+		$token = isset( $_POST['preview_token'] ) ? sanitize_text_field( wp_unslash( $_POST['preview_token'] ) ) : '';
+
+		if ( '' === $token || ! hash_equals( self::selection_token( $primary_id, $duplicate_ids ), $token ) ) {
+			$this->send_error( __( 'This merge does not match the preview that was reviewed. Preview the current selection again before executing.', 'sportspress-player-merge' ) );
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Count the events each player appears in.
+	 *
+	 * @param int[] $player_ids Player IDs.
+	 * @return array<int, int> Player ID => event count, zero-filled.
+	 */
+	private function get_event_counts( array $player_ids ): array {
+		global $wpdb;
+
+		$player_ids = array_values( array_unique( array_filter( array_map( 'intval', $player_ids ) ) ) );
+		if ( empty( $player_ids ) ) {
+			return array();
+		}
+
+		$counts       = array_fill_keys( $player_ids, 0 );
+		$placeholders = implode( ',', array_fill( 0, count( $player_ids ), '%s' ) );
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				"SELECT pm.meta_value AS player_id, COUNT(*) AS cnt FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE p.post_type = 'sp_event' AND pm.meta_key = 'sp_player' AND pm.meta_value IN ($placeholders) GROUP BY pm.meta_value",
+				...$player_ids
+			)
+		);
+
+		foreach ( (array) $rows as $row ) {
+			$counts[ (int) $row->player_id ] = (int) $row->cnt;
+		}
+
+		return $counts;
+	}
+
+	/**
+	 * Warn when the chosen survivor holds much less history than a duplicate.
+	 *
+	 * The merge keeps the primary and permanently deletes the duplicates, so
+	 * picking the emptier record is the expensive mistake to make.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return string[] Operator-facing warnings; empty when the choice looks sound.
+	 */
+	private function survivor_warnings( int $primary_id, array $duplicate_ids ): array {
+		$counts        = $this->get_event_counts( array_merge( array( $primary_id ), $duplicate_ids ) );
+		$primary_count = $counts[ $primary_id ] ?? 0;
+		$warnings      = array();
+
+		foreach ( $duplicate_ids as $duplicate_id ) {
+			$duplicate_count = $counts[ (int) $duplicate_id ] ?? 0;
+
+			if ( $duplicate_count <= $primary_count ) {
+				continue;
+			}
+
+			// "Substantially": the survivor has no history at all, or the
+			// duplicate carries at least twice as much.
+			if ( 0 !== $primary_count && $duplicate_count < $primary_count * self::HISTORY_WARNING_RATIO ) {
+				continue;
+			}
+
+			$warnings[] = sprintf(
+				/* translators: 1: duplicate player name, 2: duplicate event count, 3: primary player name, 4: primary event count */
+				__( '%1$s appears in %2$d event(s) but is about to be deleted into %3$s, which appears in %4$d. The record with the longer history is usually the one to keep.', 'sportspress-player-merge' ),
+				get_the_title( (int) $duplicate_id ),
+				$duplicate_count,
+				get_the_title( $primary_id ),
+				$primary_count
+			);
+		}
+
+		return $warnings;
 	}
 
 	/**
@@ -312,6 +459,110 @@ class SP_Merge_Ajax {
 	}
 
 	/**
+	 * Load every published player the duplicate scan should consider.
+	 *
+	 * Paged rather than a single capped query: `posts_per_page => 2000` with the
+	 * default newest-first ordering silently dropped the oldest records on a
+	 * roster larger than the cap, and those long-history records are exactly the
+	 * ones most likely to be the correct survivor. Ordering by ID ascending also
+	 * keeps the paging stable across batches.
+	 *
+	 * @return array{players: array, scanned: int, total: int, truncated: bool}
+	 */
+	public function collect_scan_players(): array {
+		$players = array();
+		$loaded  = 0;
+
+		while ( $loaded < self::MAX_SCAN_PLAYERS ) {
+			$batch = get_posts(
+				array(
+					'post_type'      => 'sp_player',
+					'posts_per_page' => self::SCAN_PAGE_SIZE,
+					'offset'         => $loaded,
+					'no_found_rows'  => true,
+					'post_status'    => 'publish',
+					'orderby'        => 'ID',
+					'order'          => 'ASC',
+				)
+			);
+
+			$batch_size = count( $batch );
+			if ( 0 === $batch_size ) {
+				break;
+			}
+
+			$players = array_merge( $players, $batch );
+			$loaded += $batch_size;
+
+			if ( $batch_size < self::SCAN_PAGE_SIZE ) {
+				break;
+			}
+		}
+
+		$players = array_slice( $players, 0, self::MAX_SCAN_PLAYERS );
+		$scanned = count( $players );
+
+		$counts = wp_count_posts( 'sp_player' );
+		$total  = isset( $counts->publish ) ? (int) $counts->publish : $scanned;
+		$total  = max( $total, $scanned );
+
+		return array(
+			'players'   => $players,
+			'scanned'   => $scanned,
+			'total'     => $total,
+			'truncated' => $scanned < $total,
+		);
+	}
+
+	/**
+	 * Read a field from a name-matcher group member.
+	 *
+	 * Members are post objects today. The matcher is being reworked to attach a
+	 * per-member certainty, so read defensively rather than assume a shape: a
+	 * missing field degrades, it never fatals.
+	 *
+	 * @param mixed  $member  Group member.
+	 * @param string $key     Field name.
+	 * @param mixed  $fallback Value when the field is absent.
+	 * @return mixed
+	 */
+	private function member_value( $member, string $key, $fallback = null ) {
+		if ( is_object( $member ) && isset( $member->$key ) ) {
+			return $member->$key;
+		}
+
+		if ( is_array( $member ) && isset( $member[ $key ] ) ) {
+			return $member[ $key ];
+		}
+
+		return $fallback;
+	}
+
+	/**
+	 * Read a member's own certainty from the matcher payload.
+	 *
+	 * @param mixed $member    Group member.
+	 * @param array $group     The group the member belongs to.
+	 * @param int   $player_id Member player ID.
+	 * @return int|null Certainty, or null when the matcher did not supply one.
+	 */
+	private function member_certainty( $member, array $group, int $player_id ): ?int {
+		$certainty = $this->member_value( $member, 'certainty' );
+
+		foreach ( array( 'member_certainty', 'certainties' ) as $map_key ) {
+			if ( null === $certainty && isset( $group[ $map_key ][ $player_id ] ) ) {
+				$certainty = $group[ $map_key ][ $player_id ];
+			}
+		}
+
+		if ( ! is_numeric( $certainty ) ) {
+			return null;
+		}
+
+		return max( 0, min( 100, (int) $certainty ) );
+	}
+
+	/**
 	 * Find possible duplicate players by matching names.
 	 */
 	public function find_duplicates(): void {
@@ -319,15 +570,8 @@ class SP_Merge_Ajax {
 			return;
 		}
 
-		$players = get_posts(
-			array(
-				'post_type'      => 'sp_player',
-				'posts_per_page' => 2000,
-				'no_found_rows'  => true,
-				'post_status'    => 'publish',
-				'fields'         => '',
-			)
-		);
+		$scan    = $this->collect_scan_players();
+		$players = $scan['players'];
 
 		$player_ids = wp_list_pluck( $players, 'ID' );
 		if ( ! empty( $player_ids ) ) {
@@ -339,34 +583,27 @@ class SP_Merge_Ajax {
 		$matched_groups = SP_Merge_Name_Matcher::find_groups( $players );
 
 		// Batch event count query for all matched player IDs.
-		$duplicate_ids = array();
+		$matched_ids = array();
 		foreach ( $matched_groups as $mg ) {
 			foreach ( $mg['players'] as $p ) {
-				$duplicate_ids[] = $p->ID;
+				$matched_ids[] = (int) $this->member_value( $p, 'ID', 0 );
 			}
 		}
-		$event_counts = array();
-		if ( ! empty( $duplicate_ids ) ) {
-			global $wpdb;
-			$placeholders = implode( ',', array_fill( 0, count( $duplicate_ids ), '%s' ) );
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$rows = $wpdb->get_results( $wpdb->prepare(
-				"SELECT pm.meta_value AS player_id, COUNT(*) AS cnt FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE p.post_type = 'sp_event' AND pm.meta_key = 'sp_player' AND pm.meta_value IN ($placeholders) GROUP BY pm.meta_value",
-				...$duplicate_ids
-			) );
-			foreach ( $rows as $row ) {
-				$event_counts[ (int) $row->player_id ] = (int) $row->cnt;
-			}
-		}
+		$event_counts = $this->get_event_counts( $matched_ids );
 
 		$groups = array();
 		foreach ( $matched_groups as $mg ) {
 			$details = array();
 			$teams   = array();
 			foreach ( $mg['players'] as $p ) {
+				$player_id = (int) $this->member_value( $p, 'ID', 0 );
+				if ( ! $player_id ) {
+					continue;
+				}
+
 				$team    = '';
 				$team_id = 0;
-				$t_ids   = get_post_meta( $p->ID, 'sp_current_team' );
+				$t_ids   = get_post_meta( $player_id, 'sp_current_team' );
 				foreach ( array_reverse( $t_ids ) as $tid ) {
 					if ( $tid && '0' !== $tid ) {
 						$t = get_post( (int) $tid );
@@ -378,45 +615,80 @@ class SP_Merge_Ajax {
 					}
 				}
 				$teams[]   = $team_id;
-				$events    = $event_counts[ $p->ID ] ?? 0;
-				$positions  = wp_get_post_terms( $p->ID, 'sp_position', array( 'fields' => 'names' ) );
-				$position   = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
+				$events    = $event_counts[ $player_id ] ?? 0;
+				$positions = wp_get_post_terms( $player_id, 'sp_position', array( 'fields' => 'names' ) );
+				$position  = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
 				$details[] = array(
-					'id'        => $p->ID,
-					'name'      => $p->post_title,
+					'id'        => $player_id,
+					'name'      => (string) $this->member_value( $p, 'post_title', '' ),
 					'team'      => $team,
 					'position'  => $position,
 					'events'    => $events,
-					'email'     => get_post_meta( $p->ID, 'spt_email', true ) ?: '',
-					'edit_link' => get_edit_post_link( $p->ID, 'raw' ),
+					'email'     => get_post_meta( $player_id, 'spt_email', true ) ?: '',
+					// Null when the matcher supplied none; the UI then treats the
+					// member as low confidence and leaves it unchecked.
+					'certainty' => $this->member_certainty( $p, $mg, $player_id ),
+					'edit_link' => get_edit_post_link( $player_id, 'raw' ),
 				);
 			}
 
-			$certainty = $mg['certainty'];
+			if ( count( $details ) < 2 ) {
+				continue;
+			}
 
-			// Boost certainty when players share the same email address.
-			$emails = array_filter( array_column( $details, 'email' ), 'strlen' );
+			$certainty = (int) ( $mg['certainty'] ?? 0 );
+
+			// Boost certainty when players share the same email address. Only the
+			// members actually holding that address earn the per-member boost.
+			$emails       = array_filter( array_column( $details, 'email' ), 'strlen' );
+			$shared_email = '';
 			if ( count( $emails ) >= 2 && count( array_unique( $emails ) ) === 1 ) {
-				$certainty = min( 100, $certainty + 20 );
+				$shared_email = (string) reset( $emails );
+				$certainty    = min( 100, $certainty + 20 );
 			}
 
 			// Boost certainty when all players share the same team.
-			$team_ids = array_filter( $teams );
-			if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $mg['players'] ) ) {
-				$certainty = min( 100, $certainty + 5 );
+			$team_boost = false;
+			$team_ids   = array_filter( $teams );
+			if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $details ) ) {
+				$team_boost = true;
+				$certainty  = min( 100, $certainty + 5 );
 			}
 
 			// Reduce certainty when players have different positions.
-			$all_positions = array_column( $details, 'position' );
-			$all_positions = array_filter( $all_positions, 'strlen' );
+			$position_penalty = false;
+			$all_positions    = array_column( $details, 'position' );
+			$all_positions    = array_filter( $all_positions, 'strlen' );
 			if ( count( $all_positions ) >= 2 && count( array_unique( $all_positions ) ) > 1 ) {
-				$certainty = max( 50, $certainty - 20 );
+				$position_penalty = true;
+				$certainty        = max( 50, $certainty - 20 );
+			}
+
+			// Apply the same signals to each member's own score so the per-member
+			// checkboxes and the group badge cannot tell different stories.
+			foreach ( $details as $index => $detail ) {
+				if ( null === $detail['certainty'] ) {
+					continue;
+				}
+
+				$member = $detail['certainty'];
+				if ( '' !== $shared_email && $detail['email'] === $shared_email ) {
+					$member = min( 100, $member + 20 );
+				}
+				if ( $team_boost ) {
+					$member = min( 100, $member + 5 );
+				}
+				if ( $position_penalty ) {
+					$member = max( 50, $member - 20 );
+				}
+
+				$details[ $index ]['certainty'] = $member;
 			}
 
 			$groups[] = array(
 				'name'      => $details[0]['name'],
 				'certainty' => $certainty,
-				'scenario'  => $mg['scenario'],
+				'scenario'  => $mg['scenario'] ?? '',
 				'players'   => $details,
 			);
 		}
@@ -425,7 +697,14 @@ class SP_Merge_Ajax {
 
 		$groups = array_slice( $groups, 0, 50 );
 
-		wp_send_json_success( array( 'groups' => $groups ) );
+		wp_send_json_success(
+			array(
+				'groups'    => $groups,
+				'scanned'   => $scan['scanned'],
+				'total'     => $scan['total'],
+				'truncated' => $scan['truncated'],
+			)
+		);
 	}
 
 	/**
@@ -463,6 +742,10 @@ class SP_Merge_Ajax {
 		$players = get_posts( $args );
 		$results = array();
 
+		// Event counts make the survivor choice visible: without them a 2016
+		// record with a decade of history and an empty 2026 one look identical.
+		$event_counts = $this->get_event_counts( wp_list_pluck( $players, 'ID' ) );
+
 		foreach ( $players as $player ) {
 			$team = '';
 			$team_ids = get_post_meta( $player->ID, 'sp_current_team' );
@@ -478,7 +761,14 @@ class SP_Merge_Ajax {
 
 			$results[] = array(
 				'id'   => $player->ID,
-				'text' => $player->post_title . ' (ID: ' . $player->ID . ')' . ( $team ? ' - ' . $team : '' ),
+				'text' => sprintf(
+					/* translators: 1: player name, 2: player ID, 3: team suffix, may be empty, 4: number of events */
+					__( '%1$s (ID: %2$d)%3$s — %4$d events', 'sportspress-player-merge' ),
+					$player->post_title,
+					$player->ID,
+					$team ? ' - ' . $team : '',
+					$event_counts[ $player->ID ] ?? 0
+				),
 			);
 		}
 
@@ -489,8 +779,9 @@ class SP_Merge_Ajax {
 	 * Send a JSON error response.
 	 *
 	 * @param string $message Error message.
+	 * @param array  $extra   Additional payload merged into the response data.
 	 */
-	private function send_error( string $message ): void {
-		wp_send_json_error( array( 'message' => $message ) );
+	private function send_error( string $message, array $extra = array() ): void {
+		wp_send_json_error( array_merge( array( 'message' => $message ), $extra ) );
 	}
 }

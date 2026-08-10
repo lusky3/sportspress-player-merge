@@ -17,6 +17,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SP_Merge_Preview {
 
 	/**
+	 * Maximum number of resolved cells listed per category before summarising.
+	 *
+	 * A ten-season merge can resolve hundreds; the rest go to the log.
+	 *
+	 * @var int
+	 */
+	private const MAX_LISTED_RESOLUTIONS = 25;
+
+	/**
 	 * Generate the preview HTML.
 	 *
 	 * @param int   $primary_id    Primary player ID.
@@ -98,6 +107,9 @@ class SP_Merge_Preview {
 		// Same-event collision warning.
 		$html .= $this->render_collision_warning( $primary_id, $duplicate_ids );
 
+		// Cell-level decisions the "Result After Merge" column cannot express.
+		$html .= $this->render_array_field_warning( $primary_id, $duplicate_ids );
+
 		$html .= '</tbody>';
 		$html .= '</table>';
 		$html .= '</div>';
@@ -152,6 +164,146 @@ class SP_Merge_Preview {
 			)
 			. '</p></div>'
 			. '<table class="merge-preview-table" style="display:none;"><tbody>';
+	}
+
+	/**
+	 * Warn about the cells the merge has to resolve in the serialized array fields.
+	 *
+	 * The "Result After Merge" column reads as a clean union, which those fields
+	 * are not: they are merged cell by cell, so a season's statistic can only come
+	 * from one of the two players. This replays the real merge (SP_Merge_Processor
+	 * does the walking) and reports both directions — a value taken from the
+	 * duplicate because the primary's cell is blank, and a value discarded because
+	 * the primary's cell already held something different.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return string HTML warning block, or empty string.
+	 */
+	private function render_array_field_warning( int $primary_id, array $duplicate_ids ): string {
+		if ( ! class_exists( 'SP_Merge_Processor' ) ) {
+			return '';
+		}
+
+		$processor = new SP_Merge_Processor();
+		$filled    = array();
+		$conflicts = array();
+
+		foreach ( SP_Merge_Processor::ARRAY_MERGE_FIELDS as $meta_key ) {
+			$state = get_post_meta( $primary_id, $meta_key, true );
+			$state = is_array( $state ) ? $state : array();
+
+			foreach ( $duplicate_ids as $dup_id ) {
+				$duplicate_value = get_post_meta( (int) $dup_id, $meta_key, true );
+
+				if ( ! is_array( $duplicate_value ) || empty( $duplicate_value ) ) {
+					continue;
+				}
+
+				/*
+				 * With nothing on the primary the merge copies the duplicate's array
+				 * wholesale — no cell is resolved, but the copy becomes the state the
+				 * next duplicate merges into, exactly as execute_merge() sequences it.
+				 */
+				if ( empty( $state ) ) {
+					$state = $duplicate_value;
+					continue;
+				}
+
+				$result = $processor->preview_array_field_merge( $meta_key, $state, $duplicate_value, (int) $dup_id );
+				$state  = $result['merged'];
+
+				foreach ( $result['resolutions'] as $resolution ) {
+					if ( 'conflict' === $resolution['action'] ) {
+						$conflicts[] = $resolution;
+					} else {
+						$filled[] = $resolution;
+					}
+				}
+			}
+		}
+
+		if ( empty( $filled ) && empty( $conflicts ) ) {
+			return '';
+		}
+
+		$html = '</tbody></table><div class="sp-merge-warning" style="margin-top:12px;">';
+
+		if ( ! empty( $filled ) ) {
+			$html .= '<p><strong>' . esc_html__( 'Note:', 'sportspress-player-merge' ) . '</strong> '
+				. sprintf(
+					/* translators: %d: number of cells taken from a duplicate */
+					esc_html__( "%d value(s) will be taken from a duplicate because the primary's cell is blank.", 'sportspress-player-merge' ),
+					count( $filled )
+				)
+				. '</p>'
+				. $this->render_resolution_list( $filled, true );
+		}
+
+		if ( ! empty( $conflicts ) ) {
+			$html .= '<p><strong>' . esc_html__( 'Warning:', 'sportspress-player-merge' ) . '</strong> '
+				. sprintf(
+					/* translators: %d: number of conflicting cells */
+					esc_html__( "%d value(s) differ between the players. The primary's value is kept and the duplicate's is discarded — check these before merging, they cannot be recovered from the merged player.", 'sportspress-player-merge' ),
+					count( $conflicts )
+				)
+				. '</p>'
+				. $this->render_resolution_list( $conflicts, false );
+		}
+
+		$html .= '</div><table class="merge-preview-table" style="display:none;"><tbody>';
+
+		return $html;
+	}
+
+	/**
+	 * List the resolved cells, capped so a ten-season merge stays readable.
+	 *
+	 * @param array $resolutions Resolutions of a single kind.
+	 * @param bool  $is_filled   True for cells taken from the duplicate, false for discarded values.
+	 * @return string HTML list.
+	 */
+	private function render_resolution_list( array $resolutions, bool $is_filled ): string {
+		$listed    = array_slice( $resolutions, 0, self::MAX_LISTED_RESOLUTIONS );
+		$remaining = count( $resolutions ) - count( $listed );
+
+		$html = '<ul style="margin-left:1.5em; list-style:disc;">';
+
+		foreach ( $listed as $resolution ) {
+			$address = SP_Merge_Processor::format_resolution_path( $resolution );
+			$kept    = SP_Merge_Processor::format_resolution_value( $resolution['kept'] );
+
+			if ( $is_filled ) {
+				$line = sprintf(
+					/* translators: 1: meta field address, 2: value taken from the duplicate, 3: duplicate player ID */
+					esc_html__( '%1$s — the duplicate\'s value "%2$s" will be used (player %3$d)', 'sportspress-player-merge' ),
+					esc_html( $address ),
+					esc_html( $kept ),
+					(int) $resolution['duplicate_id']
+				);
+			} else {
+				$line = sprintf(
+					/* translators: 1: meta field address, 2: value that is kept, 3: value that is discarded, 4: duplicate player ID */
+					esc_html__( '%1$s — keeping "%2$s", discarding "%3$s" (player %4$d)', 'sportspress-player-merge' ),
+					esc_html( $address ),
+					esc_html( $kept ),
+					esc_html( SP_Merge_Processor::format_resolution_value( $resolution['discarded'] ) ),
+					(int) $resolution['duplicate_id']
+				);
+			}
+
+			$html .= '<li>' . $line . '</li>';
+		}
+
+		if ( $remaining > 0 ) {
+			$html .= '<li>' . sprintf(
+				/* translators: %d: number of further resolved cells */
+				esc_html__( '…and %d more. The full list is written to the error log when the merge runs with WP_DEBUG enabled.', 'sportspress-player-merge' ),
+				$remaining
+			) . '</li>';
+		}
+
+		return $html . '</ul>';
 	}
 
 	/**
