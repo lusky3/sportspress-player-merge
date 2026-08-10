@@ -188,24 +188,63 @@
 		},
 
 		/**
-		 * Sanitize HTML by removing scripts and event handlers.
+		 * Sanitize HTML by removing scripts, dangerous elements and event handlers.
+		 *
+		 * Parsing MUST happen in an inert document. The previous implementation
+		 * used `$( '<div>' ).html( html )` and stripped afterwards, which runs the
+		 * very code it then removes: jQuery's .html() tests the string against
+		 * /<script|<style|<link/i and, when it matches, SKIPS the innerHTML fast
+		 * path and falls through to .append() — which goes through domManip and
+		 * evaluates scripts. So a payload containing <script> executed before a
+		 * single node was removed. Flagged BLOCKER by SonarQube (jssecurity:S5696).
+		 *
+		 * DOMParser builds a document with no browsing context: scripts are never
+		 * executed and resource-loading attributes such as onerror never fire, so
+		 * stripping afterwards is sound.
 		 *
 		 * @param {string} html Raw HTML.
 		 * @return {string} Sanitized HTML.
 		 */
 		sanitizeHtml: function( html ) {
-			var $temp = $( '<div>' ).html( html );
-			$temp.find( 'script, iframe, object, embed' ).remove();
-			$temp.find( '*' ).each( function() {
+			var doc;
+
+			try {
+				doc = new DOMParser().parseFromString( String( html ), 'text/html' );
+			} catch ( e ) {
+				return '';
+			}
+
+			if ( ! doc || ! doc.body ) {
+				return '';
+			}
+
+			var $body = $( doc.body );
+
+			$body.find( 'script, iframe, object, embed, link, style, base, meta, form' ).remove();
+
+			$body.find( '*' ).each( function() {
 				var attrs = this.attributes;
 				for ( var i = attrs.length - 1; i >= 0; i-- ) {
 					var name = ( attrs[i].name || '' ).toLowerCase();
-					if ( name.indexOf( 'on' ) === 0 ) {
+					var value = attrs[i].value || '';
+
+					// Inline handlers, and srcdoc which smuggles a whole document.
+					if ( 0 === name.indexOf( 'on' ) || 'srcdoc' === name ) {
+						this.removeAttribute( attrs[i].name );
+						continue;
+					}
+
+					// javascript: in any URL-bearing attribute.
+					if (
+						( 'href' === name || 'src' === name || 'action' === name || 'formaction' === name || 'xlink:href' === name ) &&
+						/^\s*javascript:/i.test( value )
+					) {
 						this.removeAttribute( attrs[i].name );
 					}
 				}
 			} );
-			return $temp.html();
+
+			return $body.html();
 		},
 
 		/**
