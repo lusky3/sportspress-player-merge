@@ -1151,13 +1151,19 @@ class SP_Merge_Backup {
 	}
 
 	/**
-	 * Hash a single value.
+	 * Hash a single value for change detection.
+	 *
+	 * SHA-256 rather than MD5. Nothing here is a security decision — the hash
+	 * only answers "is this cell still what the merge left behind?" — but MD5 is
+	 * flagged as a weak algorithm (SonarQube php:S4790), and a collision here
+	 * would silently let revert overwrite data it should have refused to touch.
+	 * The cost is 64 hex chars per cell instead of 32, inside a longtext column.
 	 *
 	 * @param mixed $value Value.
 	 * @return string Hash.
 	 */
 	private function hash_value( $value ): string {
-		return md5( (string) maybe_serialize( $value ) );
+		return hash( 'sha256', (string) maybe_serialize( $value ) );
 	}
 
 	/**

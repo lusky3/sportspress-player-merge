@@ -790,7 +790,13 @@
 			// Surface how much of the roster was actually looked at, so a future
 			// overflow is visible rather than silent.
 			if ( scan && typeof scan.scanned !== 'undefined' ) {
-				var coverage = 'Scanned ' + this.escapeHtml( scan.scanned ) + ' of ' + this.escapeHtml( scan.total ) + ' published players.';
+				// Coerced to numbers rather than escaped as strings: these are counts,
+				// so a number cannot carry markup at all. That is both more accurate
+				// than escaping and provably safe, which escaping a string only is
+				// once you trust the escaper (SonarQube jssecurity:S5696 does not).
+				var scanned = parseInt( scan.scanned, 10 ) || 0;
+				var scanTotal = parseInt( scan.total, 10 ) || 0;
+				var coverage = 'Scanned ' + scanned + ' of ' + scanTotal + ' published players.';
 				if ( scan.truncated ) {
 					header = '<p class="sp-scan-coverage sp-scan-truncated"><strong>' + coverage
 						+ ' Some players were not scanned, so duplicates among them will not appear here.</strong></p>';
