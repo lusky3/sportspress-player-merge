@@ -1070,7 +1070,7 @@ class SP_Merge_CLI {
 
 			if ( 2 !== count( $fields ) ) {
 				$rows[] = $this->malformed_batch_row(
-					absint( $fields[0] ?? 0 ),
+					absint( $fields[0] ),
 					sprintf(
 						/* translators: 1: row number, 2: fields found, 3: raw row text */
 						__( 'Malformed row %1$d: expected exactly 2 comma-separated fields (primary_id,duplicate_ids), found %2$d in "%3$s". Join multiple duplicate IDs with ";", not ",".', 'sportspress-player-merge' ),
@@ -1100,7 +1100,7 @@ class SP_Merge_CLI {
 
 			$rows[] = array(
 				'primary_id'    => absint( $fields[0] ),
-				'duplicate_ids' => array_values( array_map( 'absint', explode( ';', $fields[1] ) ) ),
+				'duplicate_ids' => array_map( 'absint', explode( ';', $fields[1] ) ),
 			);
 		}
 

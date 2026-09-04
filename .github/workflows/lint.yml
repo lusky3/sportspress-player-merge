@@ -69,9 +69,14 @@ jobs:
         # Pinned and --yes so npx resolves a known version rather than whatever is
         # current at run time. ignore-scripts is set via env so it also covers the
         # on-demand install npx performs before executing.
+        #
+        # tests/ is excluded: it's a standalone hand-mocked test harness (not
+        # shipped code), and repetitive per-scenario setup/assertion scaffolding
+        # across test files is expected there — the gate exists to catch
+        # duplicated *application* logic, not similarly-shaped test cases.
         env:
           NPM_CONFIG_IGNORE_SCRIPTS: 'true'
-        run: npx --yes jscpd@5.0.14 --min-lines 5 --threshold 5 --ignore 'assets/vendor/**,languages/**,.kiro/**'
+        run: npx --yes jscpd@5.0.14 --min-lines 5 --threshold 5 --ignore 'assets/vendor/**,languages/**,.kiro/**,tests/**'
 
   a11y:
     name: Accessibility Check
