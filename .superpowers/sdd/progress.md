@@ -53,3 +53,18 @@ Task 5: complete (commits db81175..bce6945, review: Approved).
   restructured without instruction. Worth the final whole-branch reviewer's
   judgment on whether a follow-up split is warranted (not this branch).
 Task 6: complete (commits b0846ac..7180f98, review clean). All 6 tasks done.
+
+Final whole-branch review: Ready to merge, With fixes (1 Critical, 6 Important,
+5 Minor addressed in commits 6b0f164, 97963bc). Re-verification pass confirmed
+all 12 findings landed correctly (class split for #7 is a clean, complete
+extraction; no stale references). Re-verification surfaced one additional
+real bug not caught by any prior review layer: the plugin's own --user flag
+(meaning "whose backup to target" on revert/backups list/delete) collided
+with WP-CLI's own built-in global --user flag (acting identity), which the
+WP-CLI runtime strips from $assoc_args before any command body runs — so the
+cross-user targeting feature could never actually work over a real `wp`
+invocation, only in test mocks that don't model global-flag stripping. Fixed
+in commit 53c64f0 by renaming the plugin's flag to --owner everywhere
+(code, docblocks, README, tests). Full suite (26 files) green after this fix.
+
+ALL WORK COMPLETE. Branch ready for PR.
