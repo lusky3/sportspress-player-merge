@@ -79,6 +79,24 @@ namespace {
 		}
 	}
 
+	if ( ! function_exists( 'update_object_term_cache' ) ) {
+		/**
+		 * No-op: lib-backup-mocks.php's get_posts()/get_post() mocks answer term
+		 * lookups directly rather than through a real term cache, so priming one
+		 * has nothing to do here. Needed because SP_Merge_Preview::generate_data()
+		 * (like generate()) primes this cache before reading term data, and no
+		 * existing mock lib defined the function until the CLI layer started
+		 * calling generate_data() directly.
+		 *
+		 * @param int[]  $object_ids Object IDs.
+		 * @param string $object_type Object type (e.g. 'sp_player').
+		 * @return bool
+		 */
+		function update_object_term_cache( $object_ids, $object_type ) {
+			return true;
+		}
+	}
+
 	if ( ! function_exists( 'wp_using_ext_object_cache' ) ) {
 		function wp_using_ext_object_cache() {
 			return false;
@@ -378,14 +396,15 @@ namespace {
 	}
 
 	// Loaded in production dependency order: SP_Merge_Preview calls into
-	// SP_Merge_Processor, and SP_Merge_CLI calls into all of these plus
-	// SP_Merge_Ajax/SP_Merge_Validation/SP_Merge_Backup (already required by
-	// lib-ajax-mocks.php -> lib-backup-mocks.php) and SP_Merge_Admin.
+	// SP_Merge_Processor, and SP_Merge_CLI/SP_Merge_CLI_Backups call into all of
+	// these plus SP_Merge_Ajax/SP_Merge_Validation/SP_Merge_Backup (already
+	// required by lib-ajax-mocks.php -> lib-backup-mocks.php) and SP_Merge_Admin.
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-name-matcher.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-processor.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-preview.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-admin.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli.php';
+	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli-backups.php';
 }
 
 namespace WP_CLI\Utils {

@@ -67,7 +67,7 @@ $GLOBALS['sp_denied_caps'] = array( 'delete_sp_players' );
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->backups_list( array(), array( 'all-users' => true ) );
+	( new SP_Merge_CLI_Backups() )->list( array(), array( 'all-users' => true ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
@@ -81,7 +81,7 @@ sp_test_seed_backup( 'merge_a', sp_test_backup_payload( 1, 2 ), 'active', null, 
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->backups_list( array(), array() );
+	( new SP_Merge_CLI_Backups() )->list( array(), array() );
 } catch ( Throwable $e ) {
 	$threw = $e;
 }
@@ -91,13 +91,27 @@ $rows = sp_test_last_log( 'table' );
 sp_assert( is_array( $rows ) && 1 === count( $rows ), 'exactly the current user\'s one backup is listed' );
 sp_assert_same( 'merge_a', $rows[0]['id'] ?? null, 'the listed row is the current user\'s own backup' );
 
+// duplicate_names comes back from get_recent_backups() as a PHP array; the
+// table format must flatten it to a string rather than handing format_items()
+// a cell it cannot render ("Array to string conversion").
+sp_assert( is_string( $rows[0]['duplicate_names'] ?? null ), 'duplicate_names is flattened to a string for --format=table' );
+sp_assert_same( 'Player 2', $rows[0]['duplicate_names'] ?? null, 'the flattened duplicate_names names the duplicate' );
+
+// get_recent_backups() itself always carries user_id now (needed so an
+// --all-users listing can show who owns each row); this test's own stub
+// format_items() logs full rows regardless of the $fields list backups_list()
+// passes, so which columns a real `wp` invocation would actually print is
+// covered by reading the source, not asserted here — see test 6 below for the
+// --all-users case this column exists for.
+sp_assert_same( 7, $rows[0]['user_id'] ?? null, 'the row still carries its real owner, whether or not it is printed as a column' );
+
 /* 3. Without edit_sp_players at all, listing even your own backups refuses. */
 sp_test_cli_reset();
 $GLOBALS['sp_denied_caps'] = array( 'edit_sp_players' );
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->backups_list( array(), array() );
+	( new SP_Merge_CLI_Backups() )->list( array(), array() );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
@@ -110,7 +124,7 @@ $GLOBALS['spm_cli_users']['id:42'] = 42;
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->backups_list( array(), array( 'user' => '42' ) );
+	( new SP_Merge_CLI_Backups() )->list( array(), array( 'user' => '42' ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
@@ -122,7 +136,7 @@ sp_test_cli_reset();
 sp_test_seed_backup( 'merge_active', sp_test_backup_payload( 3, 4 ), 'active', null, null, 7 );
 sp_test_seed_backup( 'merge_reverted', sp_test_backup_payload( 5, 6 ), 'reverted', null, null, 7 );
 
-( new SP_Merge_CLI() )->backups_list( array(), array( 'status' => 'reverted' ) );
+( new SP_Merge_CLI_Backups() )->list( array(), array( 'status' => 'reverted' ) );
 $rows = sp_test_last_log( 'table' );
 sp_assert_same( 1, is_array( $rows ) ? count( $rows ) : null, '--status=reverted keeps only the reverted row' );
 sp_assert_same( 'merge_reverted', $rows[0]['id'] ?? null, 'the surviving row is the reverted one' );
@@ -132,11 +146,19 @@ sp_test_cli_reset();
 sp_test_seed_backup( 'merge_owner_a', sp_test_backup_payload( 10, 11 ), 'active', null, null, 7 );
 sp_test_seed_backup( 'merge_owner_b', sp_test_backup_payload( 20, 21 ), 'active', null, null, 42 );
 
-( new SP_Merge_CLI() )->backups_list( array(), array( 'all-users' => true ) );
+( new SP_Merge_CLI_Backups() )->list( array(), array( 'all-users' => true ) );
 $rows = sp_test_last_log( 'table' );
 $ids  = is_array( $rows ) ? array_column( $rows, 'id' ) : array();
 sort( $ids );
 sp_assert_same( array( 'merge_owner_a', 'merge_owner_b' ), $ids, '--all-users lists backups from every owner' );
+
+// --all-users is exactly the case an admin needs to see who owns what.
+$owners = array();
+foreach ( $rows as $row ) {
+	$owners[ $row['id'] ] = $row['user_id'] ?? null;
+}
+sp_assert_same( 7, $owners['merge_owner_a'] ?? null, 'merge_owner_a is attributed to its real owner' );
+sp_assert_same( 42, $owners['merge_owner_b'] ?? null, 'merge_owner_b is attributed to its real owner' );
 
 /* -------------------------------------------------------------------------
  * backups delete
@@ -148,7 +170,7 @@ $GLOBALS['sp_denied_caps'] = array( 'delete_sp_players' );
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->backups_delete( array( 'merge_x' ), array( 'yes' => true ) );
+	( new SP_Merge_CLI_Backups() )->delete( array( 'merge_x' ), array( 'yes' => true ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
@@ -159,7 +181,7 @@ sp_test_cli_reset();
 $GLOBALS['spm_cli_users']['id:42'] = 42;
 sp_test_seed_backup( 'merge_cross_user', sp_test_backup_payload( 30, 31 ), 'active', null, null, 42 );
 
-( new SP_Merge_CLI() )->backups_delete( array( 'merge_cross_user' ), array( 'user' => '42', 'yes' => true ) );
+( new SP_Merge_CLI_Backups() )->delete( array( 'merge_cross_user' ), array( 'user' => '42', 'yes' => true ) );
 
 sp_assert_contains( 'permanently removes the only recovery path', (string) sp_test_last_log( 'warning' ), 'the reminder about losing the recovery path is printed' );
 sp_assert_contains( '1 backup(s) deleted', (string) sp_test_last_log( 'success' ), 'the success message states the count deleted' );
@@ -174,7 +196,7 @@ sp_test_seed_backup( 'merge_owner_only', sp_test_backup_payload( 40, 41 ), 'acti
 $threw = null;
 try {
 	// Nonexistent target user id.
-	( new SP_Merge_CLI() )->backups_delete( array( 'merge_owner_only' ), array( 'user' => 'ghost', 'yes' => true ) );
+	( new SP_Merge_CLI_Backups() )->delete( array( 'merge_owner_only' ), array( 'user' => 'ghost', 'yes' => true ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
@@ -185,7 +207,7 @@ sp_assert_same( 1, count( $GLOBALS['wpdb']->backups ), 'nothing was deleted when
 sp_test_cli_reset();
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->backups_delete( array(), array( 'yes' => true ) );
+	( new SP_Merge_CLI_Backups() )->delete( array(), array( 'yes' => true ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }

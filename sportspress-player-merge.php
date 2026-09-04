@@ -144,20 +144,25 @@ class SportsPress_Player_Merge_Init {
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli.php';
+			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-backups.php';
 
 			/*
-			 * A single class registration maps each public method to one
-			 * hyphenated leaf subcommand (e.g. `backups_list` -> `backups-list`),
-			 * not a two-word nested one — WP-CLI's CommandFactory only splits a
-			 * class into a command tree along namespace boundaries it is told
-			 * about explicitly, never by parsing underscores in a method name
-			 * into multiple path segments. `backups list` / `backups delete`
-			 * are therefore registered as their own commands, each bound to one
-			 * method on its own instance.
+			 * Two class registrations, each at its own namespace: WP-CLI maps
+			 * every public method of a registered class to its own hyphenated
+			 * leaf subcommand under that class's namespace. SP_Merge_CLI is
+			 * registered at the bare `sp-merge` namespace (scan, preview, merge,
+			 * revert, batch); SP_Merge_CLI_Backups is registered one level
+			 * deeper, at `sp-merge backups`, so its `list()`/`delete()` methods
+			 * become `wp sp-merge backups list` / `wp sp-merge backups delete`.
+			 * Registering backup methods on SP_Merge_CLI as well (as this file
+			 * once did, alongside two explicit `sp-merge backups <verb>`
+			 * registrations) would have given WP-CLI's own method-name mapping a
+			 * second, redundant spelling for the same destructive operation —
+			 * `wp sp-merge backups-list` next to the intended `sp-merge backups
+			 * list` — which is why the methods live on a separate class instead.
 			 */
 			WP_CLI::add_command( 'sp-merge', 'SP_Merge_CLI' );
-			WP_CLI::add_command( 'sp-merge backups list', array( new SP_Merge_CLI(), 'backups_list' ) );
-			WP_CLI::add_command( 'sp-merge backups delete', array( new SP_Merge_CLI(), 'backups_delete' ) );
+			WP_CLI::add_command( 'sp-merge backups', 'SP_Merge_CLI_Backups' );
 		}
 	}
 }

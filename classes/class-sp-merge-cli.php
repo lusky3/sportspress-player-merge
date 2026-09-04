@@ -12,11 +12,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Registers the wp sp-merge WP-CLI command family.
+ * Registers the top-level wp sp-merge subcommands: scan, preview, merge,
+ * revert, and batch.
  *
  * `scan` runs the duplicate-name scan headless and prints the matched groups.
  * `preview` runs SP_Merge_Preview's data comparison for an explicit selection
  * without merging anything.
+ *
+ * `backups list`/`backups delete` are registered from SP_Merge_CLI_Backups
+ * instead (see classes/class-sp-merge-cli-backups.php): registering them as
+ * methods here as well as under an explicit `sp-merge backups <verb>` command
+ * path would give WP-CLI's method-name convention (each public method becomes
+ * its own hyphenated leaf subcommand) a second, redundant spelling for the
+ * same destructive operation — `wp sp-merge backups-list` alongside the
+ * intended `wp sp-merge backups list`.
  */
 class SP_Merge_CLI {
 
@@ -67,6 +76,10 @@ class SP_Merge_CLI {
 	 * @param array $assoc_args Associative arguments: min-certainty, scenario, limit, format.
 	 */
 	public function scan( $args, $assoc_args ): void {
+		if ( ! current_user_can( 'edit_sp_players' ) ) {
+			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
 		$min_certainty = isset( $assoc_args['min-certainty'] ) ? (int) $assoc_args['min-certainty'] : 0;
 		$scenario      = $assoc_args['scenario'] ?? null;
 		$limit         = isset( $assoc_args['limit'] ) ? (int) $assoc_args['limit'] : 50;
@@ -164,12 +177,10 @@ class SP_Merge_CLI {
 	 *
 	 * [--format=<format>]
 	 * : Render output in a particular format. json/yaml emit the full nested
-	 * payload; table/csv are not supported here (there is no flat row to
-	 * render) and fall back to the human-readable report.
+	 * payload; anything else — including the default — renders the
+	 * human-readable report, since there is no flat row for table/csv to render.
 	 * ---
-	 * options:
-	 *   - json
-	 *   - yaml
+	 * default: table
 	 * ---
 	 *
 	 * [--porcelain]
@@ -186,6 +197,10 @@ class SP_Merge_CLI {
 	 * @param array $assoc_args Associative arguments: format, porcelain.
 	 */
 	public function preview( $args, $assoc_args ): void {
+		if ( ! current_user_can( 'edit_sp_players' ) ) {
+			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
 		$primary_id    = absint( $args[0] ?? 0 );
 		$duplicate_ids = array_map( 'absint', array_slice( $args, 1 ) );
 		$format        = $assoc_args['format'] ?? null;
@@ -539,7 +554,9 @@ class SP_Merge_CLI {
 	 * ## OPTIONS
 	 *
 	 * <file>
-	 * : Path to the CSV or JSON input file.
+	 * : Path to the CSV or JSON input file. CSV rows are `primary_id,duplicate_ids`
+	 * with no header row, where duplicate_ids is `;`-joined (e.g. `101,205;309`).
+	 * JSON is an array of `{"primary_id": 101, "duplicate_ids": [205, 309]}` objects.
 	 *
 	 * [--format=<csv|json>]
 	 * : Input format. Defaults to sniffing the file extension (.csv or .json);
@@ -547,13 +564,21 @@ class SP_Merge_CLI {
 	 *
 	 * [--stop-on-error]
 	 * : Halt on the first row that fails (after logging it). This is the default.
+	 * Cannot be combined with --continue-on-error.
 	 *
 	 * [--continue-on-error]
-	 * : Keep processing every row regardless of earlier failures.
+	 * : Keep processing every row regardless of earlier failures. Cannot be
+	 * combined with --stop-on-error.
 	 *
 	 * [--dry-run]
 	 * : Run the preview and survivor-warning gate for every row, but never
 	 * execute a merge. The log still gets one line per row.
+	 *
+	 * [--skip-preview]
+	 * : Do not print the preview report before processing each row.
+	 *
+	 * [--force]
+	 * : Proceed despite a survivor warning on any row (see `merge`'s --force).
 	 *
 	 * [--yes]
 	 * : Skip the confirmation prompt for every row.
@@ -563,17 +588,24 @@ class SP_Merge_CLI {
 	 *
 	 * ## EXAMPLES
 	 *
+	 *     # players.csv contains, one row per merge, no header:
+	 *     # 101,205;309
 	 *     wp sp-merge batch players.csv --log=/tmp/batch.log
 	 *     wp sp-merge batch players.json --continue-on-error --log=/tmp/batch.log
 	 *     wp sp-merge batch players.csv --dry-run --log=/tmp/batch.log
 	 *
 	 * @param array $args       Positional arguments: the input file path.
 	 * @param array $assoc_args Associative arguments: format, stop-on-error,
-	 *                          continue-on-error, dry-run, yes, log.
+	 *                          continue-on-error, dry-run, skip-preview, force,
+	 *                          yes, log.
 	 */
 	public function batch( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
 			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
+		if ( isset( $assoc_args['stop-on-error'] ) && isset( $assoc_args['continue-on-error'] ) ) {
+			\WP_CLI::error( 'Pass either --stop-on-error or --continue-on-error, not both.' );
 		}
 
 		$log_path = $assoc_args['log'] ?? null;
@@ -816,6 +848,12 @@ class SP_Merge_CLI {
 		// having written anything.
 		$attempt = $backup->revert( $backup_id, false, $owner_id );
 
+		// NOTE: the two success strings below ('Merge reverted successfully' and,
+		// further down, 'Merge reverted using the override. Values changed since
+		// the merge were discarded.') are copy-pasted from the translatable
+		// strings SP_Merge_Ajax::revert_merge() sends via send_error()/wp_send_json.
+		// They must be kept in sync by hand if that wording ever changes — there is
+		// no shared constant/method between the AJAX and CLI layers for this today.
 		if ( $attempt['success'] ) {
 			\WP_CLI::success( 'Merge reverted successfully' );
 			return;
@@ -840,136 +878,6 @@ class SP_Merge_CLI {
 	}
 
 	/**
-	 * List recent merge backups.
-	 *
-	 * Everyone with edit_sp_players can list their own backups; seeing every
-	 * user's backups is a step up in exposure (names and IDs of records other
-	 * League Managers merged) and needs delete_sp_players, same as deleting one.
-	 *
-	 * ## OPTIONS
-	 *
-	 * [--user=<id|login>]
-	 * : List backups owned by another user instead of the current user.
-	 * Ignored when --all-users is passed. Targeting anyone else requires the
-	 * delete_sp_players capability.
-	 *
-	 * [--all-users]
-	 * : List backups for every user. Requires the delete_sp_players capability.
-	 *
-	 * [--status=<status>]
-	 * : Only list backups with this status (e.g. active, pending, failed, reverted).
-	 *
-	 * [--limit=<n>]
-	 * : Maximum number of backups to return.
-	 *
-	 * [--format=<format>]
-	 * : Render output in a particular format.
-	 * ---
-	 * default: table
-	 * options:
-	 *   - table
-	 *   - csv
-	 *   - json
-	 *   - yaml
-	 * ---
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp sp-merge backups list --all-users --status=active
-	 *
-	 * @param array $args       Positional arguments (unused).
-	 * @param array $assoc_args Associative arguments: user, all-users, status, limit, format.
-	 */
-	public function backups_list( $args, $assoc_args ): void {
-		$all_users    = isset( $assoc_args['all-users'] );
-		$required_cap = $all_users ? 'delete_sp_players' : 'edit_sp_players';
-
-		if ( ! current_user_can( $required_cap ) ) {
-			\WP_CLI::error(
-				$all_users
-					? 'Only an Administrator (delete_sp_players) can list every user\'s backups.'
-					: 'Insufficient permissions.'
-			);
-		}
-
-		$user_id = $all_users ? null : $this->resolve_target_user( $assoc_args['user'] ?? null );
-		$status  = $assoc_args['status'] ?? null;
-		$format  = $assoc_args['format'] ?? 'table';
-		$admin   = new SP_Merge_Admin();
-
-		$backups = isset( $assoc_args['limit'] )
-			? $admin->get_recent_backups( (int) $assoc_args['limit'], $user_id, $all_users )
-			: $admin->get_recent_backups( user_id: $user_id, all_users: $all_users );
-
-		if ( false === $backups ) {
-			\WP_CLI::error( 'Failed to retrieve backup data.' );
-		}
-
-		if ( null !== $status ) {
-			$backups = array_values(
-				array_filter(
-					$backups,
-					static function ( $backup ) use ( $status ) {
-						return ( $backup['status'] ?? '' ) === $status;
-					}
-				)
-			);
-		}
-
-		\WP_CLI\Utils\format_items( $format, $backups, array( 'id', 'date', 'status', 'primary_name', 'duplicate_names' ) );
-	}
-
-	/**
-	 * Delete one or more merge backups.
-	 *
-	 * A deleted backup is the only recovery path for its merge, so this always
-	 * requires delete_sp_players — there is no lower "delete your own backup"
-	 * tier the way merge/revert have a League Manager tier.
-	 *
-	 * ## OPTIONS
-	 *
-	 * <backup-id>...
-	 * : Backup ID(s) to delete.
-	 *
-	 * [--user=<id|login>]
-	 * : Delete backup(s) owned by another user instead of the current user.
-	 *
-	 * [--yes]
-	 * : Skip the confirmation prompt.
-	 *
-	 * ## EXAMPLES
-	 *
-	 *     wp sp-merge backups delete merge_1700000000_abcd1234 --yes
-	 *
-	 * @param array $args       Positional arguments: backup ID(s).
-	 * @param array $assoc_args Associative arguments: user, yes.
-	 */
-	public function backups_delete( $args, $assoc_args ): void {
-		if ( ! current_user_can( 'delete_sp_players' ) ) {
-			\WP_CLI::error( 'Insufficient permissions.' );
-		}
-
-		if ( empty( $args ) ) {
-			\WP_CLI::error( 'Usage: wp sp-merge backups delete <backup-id>...' );
-		}
-
-		// The helper's own capability check always passes here — delete_sp_players
-		// was already required above — but it still resolves --user consistently
-		// with every other subcommand, so it is reused rather than duplicated.
-		$owner_id = $this->resolve_target_user( $assoc_args['user'] ?? null );
-
-		\WP_CLI::warning( 'Deleting a backup permanently removes the only recovery path for that merge.' );
-		\WP_CLI::confirm(
-			sprintf( 'Delete %d backup(s)? This cannot be undone.', count( $args ) ),
-			$assoc_args
-		);
-
-		$deleted = ( new SP_Merge_Backup() )->delete_backups( $args, $owner_id );
-
-		\WP_CLI::success( sprintf( '%d backup(s) deleted.', $deleted ) );
-	}
-
-	/**
 	 * Resolve which user a subcommand should act on behalf of.
 	 *
 	 * Defaults to the current user. An explicit target is only permitted for a
@@ -977,6 +885,13 @@ class SP_Merge_CLI {
 	 * for touching another user's backups at all — so a League Manager cannot
 	 * use `--user` to reach into an Administrator's (or another League
 	 * Manager's) backups.
+	 *
+	 * A near-identical copy of this method lives on SP_Merge_CLI_Backups (see
+	 * classes/class-sp-merge-cli-backups.php): `revert` here is the only
+	 * subcommand left on this class that needs it, while `backups list`/
+	 * `backups delete` need their own copy on that class. Neither class depends
+	 * on the other, so the few lines are duplicated rather than introducing a
+	 * cross-class dependency for one small helper.
 	 *
 	 * @param string|null $user_arg Raw --user value: numeric ID or login, or null/empty for "self".
 	 * @return int Resolved user ID.
