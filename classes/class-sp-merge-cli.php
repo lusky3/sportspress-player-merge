@@ -83,10 +83,31 @@ class SP_Merge_CLI {
 			\WP_CLI::error( 'Insufficient permissions.' );
 		}
 
-		$min_certainty = isset( $assoc_args['min-certainty'] ) ? (int) $assoc_args['min-certainty'] : 0;
-		$scenario      = $assoc_args['scenario'] ?? null;
-		$limit         = isset( $assoc_args['limit'] ) ? (int) $assoc_args['limit'] : 50;
-		$format        = $assoc_args['format'] ?? 'table';
+		// Validated as digit strings, not just cast: (int) silently reads a garbage
+		// value like "abc" as 0 and "-1" as -1, so --min-certainty=abc used to
+		// filter as if it meant 0 and --limit=-1 used to produce an empty result
+		// with no explanation — either one is a silent misread on a command that
+		// permanently deletes posts, not a value worth guessing at.
+		if ( isset( $assoc_args['min-certainty'] ) ) {
+			if ( 1 !== preg_match( '/^\d+$/', (string) $assoc_args['min-certainty'] ) || (int) $assoc_args['min-certainty'] > 100 ) {
+				\WP_CLI::error( '--min-certainty must be an integer between 0 and 100.' );
+			}
+			$min_certainty = (int) $assoc_args['min-certainty'];
+		} else {
+			$min_certainty = 0;
+		}
+
+		if ( isset( $assoc_args['limit'] ) ) {
+			if ( 1 !== preg_match( '/^\d+$/', (string) $assoc_args['limit'] ) || (int) $assoc_args['limit'] < 1 ) {
+				\WP_CLI::error( '--limit must be a positive integer.' );
+			}
+			$limit = (int) $assoc_args['limit'];
+		} else {
+			$limit = 50;
+		}
+
+		$scenario = $assoc_args['scenario'] ?? null;
+		$format   = $assoc_args['format'] ?? 'table';
 
 		$scan   = ( new SP_Merge_Ajax() )->collect_scan_players();
 		$groups = SP_Merge_Name_Matcher::find_groups( $scan['players'] );
@@ -253,10 +274,14 @@ class SP_Merge_CLI {
 	 *
 	 * [--format=<format>]
 	 * : Render output in a particular format. json/yaml emit the full nested
-	 * payload; anything else — including the default — renders the
-	 * human-readable report, since there is no flat row for table/csv to render.
+	 * payload; table (the default) renders the human-readable report, since
+	 * there is no flat row for a table to render.
 	 * ---
 	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - yaml
 	 * ---
 	 *
 	 * [--porcelain]
@@ -475,13 +500,20 @@ class SP_Merge_CLI {
 	 * [--yes]
 	 * : Skip the confirmation prompt.
 	 *
+	 * [--porcelain]
+	 * : On success, print only the backup ID and nothing else — no "Merge
+	 * completed" message, no per-cell resolution list. Matches `wp post
+	 * create --porcelain`'s convention. Has no effect on failure, which
+	 * always goes through the normal error path regardless.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp sp-merge merge 123 456 789
 	 *     wp sp-merge merge 123 456 --force --yes
+	 *     wp sp-merge merge 123 456 --skip-preview --yes --porcelain
 	 *
 	 * @param array $args       Positional arguments: primary ID, then duplicate ID(s).
-	 * @param array $assoc_args Associative arguments: skip-preview, force, yes.
+	 * @param array $assoc_args Associative arguments: skip-preview, force, yes, porcelain.
 	 */
 	public function merge( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
@@ -495,6 +527,8 @@ class SP_Merge_CLI {
 			\WP_CLI::error( 'Usage: wp sp-merge merge <primary-id> <duplicate-id>...' );
 		}
 
+		$porcelain = isset( $assoc_args['porcelain'] );
+
 		// absint() here mirrors exactly what SP_Merge_Validation::validate_merge_selection()
 		// would do to these values anyway (it is idempotent), so pre-casting to satisfy
 		// run_one_merge()'s int/int[] signature changes nothing about how an invalid
@@ -503,6 +537,10 @@ class SP_Merge_CLI {
 
 		if ( ! $outcome['success'] ) {
 			\WP_CLI::error( $outcome['message'] );
+		}
+
+		if ( $porcelain ) {
+			\WP_CLI::log( (string) $outcome['backup_id'] );
 		}
 	}
 
@@ -623,31 +661,37 @@ class SP_Merge_CLI {
 			);
 		}
 
-		\WP_CLI::success( sprintf( 'Merge completed. Backup ID: %s', $merge_result['backup_id'] ) );
+		// Suppressed under --porcelain: merge() is this method's only caller that
+		// ever sets that key (batch() never does, so a batch row's per-row success
+		// message and resolution list are unaffected), and porcelain's contract is
+		// to print only the backup ID on success — no prose, no resolution list.
+		if ( ! isset( $assoc_args['porcelain'] ) ) {
+			\WP_CLI::success( sprintf( 'Merge completed. Backup ID: %s', $merge_result['backup_id'] ) );
 
-		foreach ( (array) ( $merge_result['resolutions'] ?? array() ) as $resolution ) {
-			$address = SP_Merge_Processor::format_resolution_path( $resolution );
-			$kept    = SP_Merge_Processor::format_resolution_value( $resolution['kept'] );
+			foreach ( (array) ( $merge_result['resolutions'] ?? array() ) as $resolution ) {
+				$address = SP_Merge_Processor::format_resolution_path( $resolution );
+				$kept    = SP_Merge_Processor::format_resolution_value( $resolution['kept'] );
 
-			if ( 'conflict' === $resolution['action'] ) {
-				\WP_CLI::log(
-					sprintf(
-						'  %1$s — keeping "%2$s", discarding "%3$s" (player %4$d)',
-						$address,
-						$kept,
-						SP_Merge_Processor::format_resolution_value( $resolution['discarded'] ),
-						(int) $resolution['duplicate_id']
-					)
-				);
-			} else {
-				\WP_CLI::log(
-					sprintf(
-						'  %1$s — the duplicate\'s value "%2$s" was used (player %3$d)',
-						$address,
-						$kept,
-						(int) $resolution['duplicate_id']
-					)
-				);
+				if ( 'conflict' === $resolution['action'] ) {
+					\WP_CLI::log(
+						sprintf(
+							'  %1$s — keeping "%2$s", discarding "%3$s" (player %4$d)',
+							$address,
+							$kept,
+							SP_Merge_Processor::format_resolution_value( $resolution['discarded'] ),
+							(int) $resolution['duplicate_id']
+						)
+					);
+				} else {
+					\WP_CLI::log(
+						sprintf(
+							'  %1$s — the duplicate\'s value "%2$s" was used (player %3$d)',
+							$address,
+							$kept,
+							(int) $resolution['duplicate_id']
+						)
+					);
+				}
 			}
 		}
 
@@ -688,9 +732,12 @@ class SP_Merge_CLI {
 	 * of `{"primary_id": 101, "duplicate_ids": [205, 309]}` objects, where
 	 * duplicate_ids must really be an array of player IDs.
 	 *
-	 * [--format=<csv|json>]
-	 * : Input format. Defaults to sniffing the file extension (.csv or .json);
-	 * required when the extension is anything else.
+	 * [--input-format=<csv|json>]
+	 * : Format of the <file> being read. Defaults to sniffing the file
+	 * extension (.csv or .json); required when the extension is anything
+	 * else. Named --input-format, not --format, because scan/preview/
+	 * backups list all use --format to mean the opposite thing -- how
+	 * *output* is rendered -- and this is the one subcommand reading a file.
 	 *
 	 * [--stop-on-error]
 	 * : Halt on the first row that fails (after logging it). This is the default.
@@ -727,7 +774,7 @@ class SP_Merge_CLI {
 	 *     wp sp-merge batch players.csv --yes --dry-run --log=/tmp/batch.log
 	 *
 	 * @param array $args       Positional arguments: the input file path.
-	 * @param array $assoc_args Associative arguments: format, stop-on-error,
+	 * @param array $assoc_args Associative arguments: input-format, stop-on-error,
 	 *                          continue-on-error, dry-run, skip-preview, force,
 	 *                          yes, log.
 	 */
@@ -771,9 +818,9 @@ class SP_Merge_CLI {
 			\WP_CLI::error( sprintf( 'Cannot read input file: %s', $file ) );
 		}
 
-		$format = $assoc_args['format'] ?? $this->sniff_batch_format( $file );
+		$format = $assoc_args['input-format'] ?? $this->sniff_batch_format( $file );
 		if ( null === $format ) {
-			\WP_CLI::error( 'Cannot determine input format: pass --format=<csv|json>, or use a .csv/.json file extension.' );
+			\WP_CLI::error( 'Cannot determine input format: pass --input-format=<csv|json>, or use a .csv/.json file extension.' );
 		}
 
 		$contents = file_get_contents( $file );
@@ -821,6 +868,15 @@ class SP_Merge_CLI {
 			$this->write_log_row( $log_handle, $row, $outcome );
 
 			++$processed;
+
+			// Every row primes post/term caches that nothing in the same PHP
+			// process ever flushes, so a large batch's runtime cache grows
+			// unbounded. wp_cache_flush_runtime() (WP 6.0+, already required)
+			// clears only that in-process cache — a persistent object cache
+			// (Redis/Memcached), if configured, is untouched.
+			if ( 0 === $processed % 50 ) {
+				wp_cache_flush_runtime();
+			}
 
 			if ( $outcome['success'] ) {
 				++$succeeded;
@@ -963,7 +1019,10 @@ class SP_Merge_CLI {
 			}
 
 			++$number;
-			$fields = array_map( 'trim', str_getcsv( $line ) );
+			// $escape passed explicitly ('' disables backslash-escaping): PHP 8.4
+			// deprecates relying on str_getcsv()'s implicit default, and a plain
+			// numeric-ID file has no legitimate use for backslash escaping anyway.
+			$fields = array_map( 'trim', str_getcsv( $line, ',', '"', '' ) );
 
 			if ( 2 !== count( $fields ) ) {
 				$rows[] = $this->malformed_batch_row(
@@ -1174,7 +1233,7 @@ class SP_Merge_CLI {
 			\WP_CLI::error( 'Usage: wp sp-merge revert <backup-id>' );
 		}
 
-		$owner_id = $this->resolve_target_user( $assoc_args['owner'] ?? null );
+		$owner_id = SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
 		$backup   = new SP_Merge_Backup();
 
 		// Always the first call, whether or not --force was passed: it either
@@ -1209,43 +1268,5 @@ class SP_Merge_CLI {
 		}
 
 		\WP_CLI::success( 'Merge reverted using the override. Values changed since the merge were discarded.' );
-	}
-
-	/**
-	 * Resolve which user a subcommand should act on behalf of.
-	 *
-	 * Defaults to the current user. An explicit target is only permitted for a
-	 * caller holding delete_sp_players — the same tier the AJAX layer requires
-	 * for touching another user's backups at all — so a League Manager cannot
-	 * use `--owner` to reach into an Administrator's (or another League
-	 * Manager's) backups.
-	 *
-	 * A near-identical copy of this method lives on SP_Merge_CLI_Backups (see
-	 * classes/class-sp-merge-cli-backups.php): `revert` here is the only
-	 * subcommand left on this class that needs it, while `backups list`/
-	 * `backups delete` need their own copy on that class. Neither class depends
-	 * on the other, so the few lines are duplicated rather than introducing a
-	 * cross-class dependency for one small helper.
-	 *
-	 * @param string|null $user_arg Raw --owner value: numeric ID or login, or null/empty for "self".
-	 * @return int Resolved user ID.
-	 */
-	private function resolve_target_user( ?string $user_arg ): int {
-		if ( null === $user_arg || '' === $user_arg ) {
-			return get_current_user_id();
-		}
-
-		$user = is_numeric( $user_arg ) ? get_user_by( 'id', (int) $user_arg ) : get_user_by( 'login', $user_arg );
-		if ( ! $user ) {
-			\WP_CLI::error( sprintf( 'No user found matching "%s".', $user_arg ) );
-		}
-
-		$target_id = (int) $user->ID;
-
-		if ( $target_id !== get_current_user_id() && ! current_user_can( 'delete_sp_players' ) ) {
-			\WP_CLI::error( 'Only an Administrator (delete_sp_players) can act on another user\'s backups.' );
-		}
-
-		return $target_id;
 	}
 }

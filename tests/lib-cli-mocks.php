@@ -79,6 +79,19 @@ namespace {
 		}
 	}
 
+	if ( ! function_exists( 'wp_cache_flush_runtime' ) ) {
+		/**
+		 * No-op: no runtime cache exists in this harness (the meta/post mocks
+		 * answer straight from $GLOBALS), so there is nothing to flush. Needed
+		 * because batch() calls this every 50 rows in production (WP 6.0+).
+		 *
+		 * @return bool
+		 */
+		function wp_cache_flush_runtime() {
+			return true;
+		}
+	}
+
 	if ( ! function_exists( 'update_object_term_cache' ) ) {
 		/**
 		 * No-op: lib-backup-mocks.php's get_posts()/get_post() mocks answer term

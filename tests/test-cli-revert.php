@@ -210,6 +210,61 @@ sp_assert( null === $threw, 'a clean revert with nothing to override needs no co
 sp_assert_same( 'reverted', $GLOBALS['wpdb']->backups[0]['status'], 'the clean revert actually completed' );
 
 /* -------------------------------------------------------------------------
+ * 4b. --owner is resolved through the shared SP_Merge_Validation::
+ *     resolve_target_user() — the same helper `backups list`/`backups
+ *     delete` use, since this method used to be duplicated byte-for-byte on
+ *     both SP_Merge_CLI and SP_Merge_CLI_Backups. Exercised here via
+ *     `revert` so both call sites of the now-single shared implementation
+ *     have direct test coverage.
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+$GLOBALS['sp_denied_caps']         = array( 'delete_sp_players' );
+$GLOBALS['spm_cli_users']['id:42'] = 42;
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->revert( array( 'merge_1700000000_ffffffff' ), array( 'owner' => '42', 'yes' => true ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, '--owner targeting another user without delete_sp_players refuses' );
+sp_assert_contains( 'Administrator', $threw ? $threw->getMessage() : '', 'the refusal names the required tier' );
+
+sp_test_cli_reset();
+$GLOBALS['spm_cli_users']['id:42'] = 42;
+sp_test_seed_backup(
+	'merge_1700000500_11111111',
+	array(
+		'primary_id'        => 70,
+		'duplicate_ids'     => array( 71 ),
+		'primary_backup'    => array(
+			'meta_data'  => array(),
+			'taxonomies' => array(),
+		),
+		'duplicate_backups' => array(),
+		'affected_events'   => array(),
+		'affected_lists'    => array(),
+		'value_hashes'      => array( 'events' => array(), 'lists' => array(), 'primary' => array() ),
+	),
+	'active',
+	array( 70, 71 ),
+	null,
+	42
+);
+
+$threw = null;
+try {
+	// delete_sp_players is held (not denied in this scenario), so --owner=42
+	// (a different user than the current one, 7) is permitted.
+	( new SP_Merge_CLI() )->revert( array( 'merge_1700000500_11111111' ), array( 'owner' => '42', 'yes' => true ) );
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+sp_assert( null === $threw, 'holding delete_sp_players, --owner targeting another user\'s backup succeeds' . ( $threw ? ' (' . $threw->getMessage() . ')' : '' ) );
+sp_assert_same( 'reverted', $GLOBALS['wpdb']->backups[0]['status'], 'the cross-user backup was really reverted' );
+
+/* -------------------------------------------------------------------------
  * 5. Missing arguments and insufficient permissions both refuse.
  * ---------------------------------------------------------------------- */
 

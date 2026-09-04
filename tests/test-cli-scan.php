@@ -143,6 +143,62 @@ sp_assert_same( 'warning', $summary['level'], 'a truncated scan warns instead of
 sp_assert_contains( '40 of 60', $summary['message'], 'the warning states how much of the roster was actually scanned' );
 sp_assert_contains( '20 were skipped', $summary['message'], 'the warning states how many players were skipped' );
 
+/* 5b. --min-certainty/--limit reject garbage instead of silently misreading it:
+ *     (int) casts "abc" to 0 and "-1" to -1, so these used to filter as if
+ *     --min-certainty=0 and produce an empty, unexplained result rather than
+ *     refusing outright. */
+sp_test_cli_reset();
+sp_test_seed_named_roster(
+	array(
+		array( 'id' => 1, 'name' => 'John Smith' ),
+		array( 'id' => 2, 'name' => 'John Smith' ),
+	)
+);
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array( 'min-certainty' => 'abc' ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, '--min-certainty=abc refuses instead of filtering as if it were 0' );
+sp_assert_contains( '--min-certainty', $threw ? $threw->getMessage() : '', 'the refusal names --min-certainty' );
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array( 'min-certainty' => '101' ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, '--min-certainty=101 refuses as out of range' );
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array( 'limit' => '-1' ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, '--limit=-1 refuses instead of silently producing an empty result' );
+sp_assert_contains( '--limit', $threw ? $threw->getMessage() : '', 'the refusal names --limit' );
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array( 'limit' => '0' ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, '--limit=0 refuses — a limit has to keep at least one group' );
+
+/* A valid --min-certainty/--limit pair still runs normally. */
+$GLOBALS['spm_cli_log'] = array();
+$threw                  = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array( 'min-certainty' => '0', 'limit' => '1' ) );
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+sp_assert( null === $threw, 'a valid --min-certainty/--limit still runs' . ( $threw ? ' (' . $threw->getMessage() . ')' : '' ) );
+
 /* 6. Lacking edit_sp_players refuses the scan outright, before touching the roster. */
 sp_test_cli_reset();
 $GLOBALS['sp_denied_caps'] = array( 'edit_sp_players' );

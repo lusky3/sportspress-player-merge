@@ -344,14 +344,14 @@ try {
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
-sp_assert( null !== $threw, 'an unrecognized extension without --format refuses the batch' );
+sp_assert( null !== $threw, 'an unrecognized extension without --input-format refuses the batch' );
 
 ( new SP_Merge_CLI() )->batch(
 	array( $txt_path ),
-	array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path, 'format' => 'csv' )
+	array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path, 'input-format' => 'csv' )
 );
 $log_rows = sp_test_batch_read_log( $log_path );
-sp_assert( 2 === count( $log_rows ), 'an explicit --format=csv reads a .txt file as CSV' );
+sp_assert( 2 === count( $log_rows ), 'an explicit --input-format=csv reads a .txt file as CSV' );
 
 unlink( $txt_path );
 unlink( $log_path );
@@ -544,7 +544,7 @@ foreach ( array( 'https://example.test/merges.csv', 'php://input', sys_get_temp_
 	try {
 		( new SP_Merge_CLI() )->batch(
 			array( $bad_path ),
-			array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path, 'format' => 'csv' )
+			array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path, 'input-format' => 'csv' )
 		);
 	} catch ( SP_Test_CLI_Error $e ) {
 		$threw = $e;

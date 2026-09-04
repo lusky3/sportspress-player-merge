@@ -51,6 +51,8 @@ class SP_Merge_CLI_Backups {
 	 *
 	 * [--status=<status>]
 	 * : Only list backups with this status (e.g. active, pending, failed, reverted).
+	 * Applied before --limit, so --status=failed --limit=10 returns the 10
+	 * newest failed backups, not the failed ones among the 10 newest overall.
 	 *
 	 * [--limit=<n>]
 	 * : Maximum number of backups to return.
@@ -85,7 +87,7 @@ class SP_Merge_CLI_Backups {
 			);
 		}
 
-		$user_id = $all_users ? null : $this->resolve_target_user( $assoc_args['owner'] ?? null );
+		$user_id = $all_users ? null : SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
 		$status  = $assoc_args['status'] ?? null;
 		$format  = $assoc_args['format'] ?? 'table';
 		$admin   = new SP_Merge_Admin();
@@ -96,8 +98,8 @@ class SP_Merge_CLI_Backups {
 
 		try {
 			$backups = isset( $assoc_args['limit'] )
-				? $admin->get_recent_backups( (int) $assoc_args['limit'], $user_id, $all_users )
-				: $admin->get_recent_backups( user_id: $user_id, all_users: $all_users );
+				? $admin->get_recent_backups( (int) $assoc_args['limit'], $user_id, $all_users, $status )
+				: $admin->get_recent_backups( user_id: $user_id, all_users: $all_users, status: $status );
 		} catch ( Throwable $e ) {
 			// Throwable, not Exception: the rows being read carry decade-old
 			// serialized payloads, and malformed data raises a TypeError, which is
@@ -109,16 +111,10 @@ class SP_Merge_CLI_Backups {
 			\WP_CLI::error( 'Failed to retrieve backup data.' );
 		}
 
-		if ( null !== $status ) {
-			$backups = array_values(
-				array_filter(
-					$backups,
-					static function ( $backup ) use ( $status ) {
-						return ( $backup['status'] ?? '' ) === $status;
-					}
-				)
-			);
-		}
+		// --status is applied by get_recent_backups() itself now, in SQL, before
+		// its own LIMIT — filtering the already-limited result set here instead
+		// would return the matching subset of the N newest backups overall, not
+		// the N newest matching backups, on --status=<x> --limit=<n>.
 
 		// duplicate_names comes back from get_recent_backups() as a PHP array
 		// (it is a JSON_EXTRACT()ed column, decoded); format_items() only knows
@@ -127,15 +123,26 @@ class SP_Merge_CLI_Backups {
 		// column. json/yaml can carry the array as-is (yaml's stub here logs the
 		// raw $items array rather than a rendered string, same as json), so only
 		// flatten for the formats that actually need a scalar cell.
-		if ( ! in_array( $format, array( 'json', 'yaml' ), true ) ) {
-			$backups = array_map(
-				static function ( array $backup ): array {
+		//
+		// The same pass also resolves 'date': --format=csv/json get the
+		// machine-sortable value instead of --format=table's locale-translated,
+		// human-friendly one, and 'date_machine' — never a real column — is
+		// dropped either way.
+		$backups = array_map(
+			static function ( array $backup ) use ( $format ): array {
+				if ( in_array( $format, array( 'csv', 'json' ), true ) ) {
+					$backup['date'] = $backup['date_machine'];
+				}
+				unset( $backup['date_machine'] );
+
+				if ( ! in_array( $format, array( 'json', 'yaml' ), true ) ) {
 					$backup['duplicate_names'] = implode( ', ', (array) $backup['duplicate_names'] );
-					return $backup;
-				},
-				$backups
-			);
-		}
+				}
+
+				return $backup;
+			},
+			$backups
+		);
 
 		$fields = array( 'id', 'date', 'status', 'primary_name', 'duplicate_names' );
 
@@ -186,7 +193,7 @@ class SP_Merge_CLI_Backups {
 		// The helper's own capability check always passes here — delete_sp_players
 		// was already required above — but it still resolves --owner consistently
 		// with every other subcommand, so it is reused rather than duplicated.
-		$owner_id = $this->resolve_target_user( $assoc_args['owner'] ?? null );
+		$owner_id = SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
 
 		\WP_CLI::warning( 'Deleting a backup permanently removes the only recovery path for that merge.' );
 		\WP_CLI::confirm(
@@ -204,41 +211,5 @@ class SP_Merge_CLI_Backups {
 		}
 
 		\WP_CLI::success( sprintf( '%d backup(s) deleted.', $deleted ) );
-	}
-
-	/**
-	 * Resolve which user a subcommand should act on behalf of.
-	 *
-	 * Defaults to the current user. An explicit target is only permitted for a
-	 * caller holding delete_sp_players — the same tier the AJAX layer requires
-	 * for touching another user's backups at all — so a League Manager cannot
-	 * use `--owner` to reach into an Administrator's (or another League
-	 * Manager's) backups.
-	 *
-	 * A near-identical copy of this method lives on SP_Merge_CLI (used by
-	 * `revert`). Neither class depends on the other, so the few lines are
-	 * duplicated rather than introducing a cross-class dependency for one small
-	 * helper — see the note on that copy for the full rationale.
-	 *
-	 * @param string|null $user_arg Raw --owner value: numeric ID or login, or null/empty for "self".
-	 * @return int Resolved user ID.
-	 */
-	private function resolve_target_user( ?string $user_arg ): int {
-		if ( null === $user_arg || '' === $user_arg ) {
-			return get_current_user_id();
-		}
-
-		$user = is_numeric( $user_arg ) ? get_user_by( 'id', (int) $user_arg ) : get_user_by( 'login', $user_arg );
-		if ( ! $user ) {
-			\WP_CLI::error( sprintf( 'No user found matching "%s".', $user_arg ) );
-		}
-
-		$target_id = (int) $user->ID;
-
-		if ( $target_id !== get_current_user_id() && ! current_user_can( 'delete_sp_players' ) ) {
-			\WP_CLI::error( 'Only an Administrator (delete_sp_players) can act on another user\'s backups.' );
-		}
-
-		return $target_id;
 	}
 }

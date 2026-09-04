@@ -293,8 +293,19 @@ function get_the_title( $id ) {
 	return 'Player ' . $id;
 }
 
-function mysql2date( $format, $date ) {
-	return $date;
+function mysql2date( $format, $date, $translate = true ) {
+	if ( empty( $date ) ) {
+		return '';
+	}
+	$timestamp = strtotime( (string) $date );
+	if ( false === $timestamp ) {
+		return (string) $date;
+	}
+	// $translate is ignored: the real function's locale translation of month/day
+	// names has nothing to test here, and every format string these tests use
+	// ('M j, Y g:i A', 'Y-m-d H:i:s') is otherwise faithfully reproduced by
+	// gmdate().
+	return gmdate( $format, $timestamp );
 }
 
 function wp_generate_password( $length = 12, $special = true ) {
@@ -592,20 +603,31 @@ class SP_Test_WPDB {
 		list( $sql, $args ) = $this->unpack( $query );
 
 		// SP_Merge_Admin::get_recent_backups() — WHERE user_id is present unless
-		// the caller asked for every owner.
+		// the caller asked for every owner, and an optional status condition (the
+		// only clause using a %s placeholder in this query) may follow it.
 		if ( false !== strpos( $sql, 'SELECT backup_id, user_id, created_at,' ) ) {
-			if ( false !== strpos( $sql, 'WHERE user_id = %d' ) ) {
+			$user_id = null;
+			if ( false !== strpos( $sql, 'user_id = %d' ) ) {
 				$user_id = (int) array_shift( $args );
-				$limit   = (int) array_shift( $args );
-			} else {
-				$user_id = null;
-				$limit   = (int) array_shift( $args );
 			}
+
+			$status = null;
+			if ( false !== strpos( $sql, '%s' ) ) {
+				$status = (string) array_shift( $args );
+			}
+
+			$limit = (int) array_shift( $args );
 
 			$rows = array_filter(
 				$this->backups,
-				static function ( $row ) use ( $user_id ) {
-					return null === $user_id || (int) $row['user_id'] === $user_id;
+				static function ( $row ) use ( $user_id, $status ) {
+					if ( null !== $user_id && (int) $row['user_id'] !== $user_id ) {
+						return false;
+					}
+					if ( null !== $status && (string) ( $row['status'] ?? 'active' ) !== $status ) {
+						return false;
+					}
+					return true;
 				}
 			);
 

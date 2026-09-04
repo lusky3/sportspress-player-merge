@@ -141,6 +141,43 @@ $rows = sp_test_last_log( 'table' );
 sp_assert_same( 1, is_array( $rows ) ? count( $rows ) : null, '--status=reverted keeps only the reverted row' );
 sp_assert_same( 'merge_reverted', $rows[0]['id'] ?? null, 'the surviving row is the reverted one' );
 
+/* 5b. --status is applied before --limit: --status=<x> --limit=<n> returns the
+ *     n newest backups matching that status, not the matching subset of the n
+ *     newest backups overall. Three 'failed' backups are seeded, older than
+ *     one lone 'active' one, so a naive "fetch --limit then filter" approach
+ *     would return zero rows for --status=failed --limit=1. */
+sp_test_cli_reset();
+sp_test_seed_backup( 'merge_failed_old', sp_test_backup_payload( 100, 101 ), 'failed', null, null, 7 );
+$GLOBALS['wpdb']->backups[0]['created_at'] = '2026-08-01 08:00:00';
+sp_test_seed_backup( 'merge_active_newest', sp_test_backup_payload( 102, 103 ), 'active', null, null, 7 );
+$GLOBALS['wpdb']->backups[1]['created_at'] = '2026-08-01 09:00:00';
+sp_test_seed_backup( 'merge_failed_newest', sp_test_backup_payload( 104, 105 ), 'failed', null, null, 7 );
+$GLOBALS['wpdb']->backups[2]['created_at'] = '2026-08-01 10:00:00';
+
+( new SP_Merge_CLI_Backups() )->list( array(), array( 'status' => 'failed', 'limit' => 1 ) );
+$rows = sp_test_last_log( 'table' );
+sp_assert_same( 1, is_array( $rows ) ? count( $rows ) : null, '--status=failed --limit=1 still returns exactly one row' );
+sp_assert_same(
+	'merge_failed_newest',
+	$rows[0]['id'] ?? null,
+	'--status filters before --limit — the newest FAILED backup, not the newest backup overall (which is active)'
+);
+
+/* 5c. --format=csv/json use a machine-sortable date; --format=table keeps the
+ *     locale-friendly one. */
+sp_test_cli_reset();
+sp_test_seed_backup( 'merge_dated', sp_test_backup_payload( 200, 201 ), 'active', null, null, 7 );
+
+( new SP_Merge_CLI_Backups() )->list( array(), array( 'format' => 'table' ) );
+$table_rows = sp_test_last_log( 'table' );
+sp_assert_same( 'Aug 1, 2026 10:00 AM', $table_rows[0]['date'] ?? null, '--format=table keeps the human-friendly date format' );
+sp_assert( ! array_key_exists( 'date_machine', $table_rows[0] ?? array() ), '--format=table never surfaces the internal date_machine field' );
+
+( new SP_Merge_CLI_Backups() )->list( array(), array( 'format' => 'json' ) );
+$json_rows = json_decode( (string) sp_test_last_log( 'json' ), true );
+sp_assert_same( '2026-08-01 10:00:00', $json_rows[0]['date'] ?? null, "--format=json's date is the machine-sortable Y-m-d H:i:s form" );
+sp_assert( ! array_key_exists( 'date_machine', $json_rows[0] ?? array() ), '--format=json never surfaces the internal date_machine field either' );
+
 /* 6. --all-users, held by an admin, lists every owner's backups. */
 sp_test_cli_reset();
 sp_test_seed_backup( 'merge_owner_a', sp_test_backup_payload( 10, 11 ), 'active', null, null, 7 );

@@ -292,6 +292,41 @@ class SP_Merge_Validation {
 	}
 
 	/**
+	 * Resolve which user a WP-CLI subcommand should act on behalf of.
+	 *
+	 * Defaults to the current user. An explicit target is only permitted for a
+	 * caller holding delete_sp_players — the same tier the AJAX layer requires
+	 * for touching another user's backups at all — so a League Manager cannot
+	 * use `--owner` to reach into an Administrator's (or another League
+	 * Manager's) backups.
+	 *
+	 * Shared by SP_Merge_CLI::revert() and SP_Merge_CLI_Backups::list()/
+	 * delete(): previously an identical private method duplicated byte-for-byte
+	 * on both classes.
+	 *
+	 * @param string|null $user_arg Raw --owner value: numeric ID or login, or null/empty for "self".
+	 * @return int Resolved user ID.
+	 */
+	public static function resolve_target_user( ?string $user_arg ): int {
+		if ( null === $user_arg || '' === $user_arg ) {
+			return get_current_user_id();
+		}
+
+		$user = is_numeric( $user_arg ) ? get_user_by( 'id', (int) $user_arg ) : get_user_by( 'login', $user_arg );
+		if ( ! $user ) {
+			\WP_CLI::error( sprintf( __( 'No user found matching "%s".', 'sportspress-player-merge' ), $user_arg ) );
+		}
+
+		$target_id = (int) $user->ID;
+
+		if ( get_current_user_id() !== $target_id && ! current_user_can( 'delete_sp_players' ) ) {
+			\WP_CLI::error( __( 'Only an Administrator (delete_sp_players) can act on another user\'s backups.', 'sportspress-player-merge' ) );
+		}
+
+		return $target_id;
+	}
+
+	/**
 	 * Warn when the chosen survivor holds much less history than a duplicate.
 	 *
 	 * The merge keeps the primary and permanently deletes the duplicates, so

@@ -181,14 +181,18 @@ class SP_Merge_Admin {
 	/**
 	 * Get recent backups, by default for the current user only.
 	 *
-	 * @param int      $limit     Maximum rows to return.
-	 * @param int|null $user_id   Owner to list backups for instead of the current user.
-	 *                            Ignored when $all_users is true.
-	 * @param bool     $all_users List backups for every owner (e.g. WP-CLI under
-	 *                            delete_sp_players), ignoring $user_id.
+	 * @param int         $limit     Maximum rows to return.
+	 * @param int|null    $user_id   Owner to list backups for instead of the current user.
+	 *                               Ignored when $all_users is true.
+	 * @param bool        $all_users List backups for every owner (e.g. WP-CLI under
+	 *                               delete_sp_players), ignoring $user_id.
+	 * @param string|null $status    Only rows with this status. Applied in SQL, before
+	 *                               $limit — filtering it out of the result set afterward
+	 *                               would return the matching subset of the $limit newest
+	 *                               rows overall, not the $limit newest matching rows.
 	 * @return array[]|false Backups or false on error.
 	 */
-	public function get_recent_backups( int $limit = self::MAX_LISTED_BACKUPS, ?int $user_id = null, bool $all_users = false ): array|false {
+	public function get_recent_backups( int $limit = self::MAX_LISTED_BACKUPS, ?int $user_id = null, bool $all_users = false, ?string $status = null ): array|false {
 		global $wpdb;
 
 		$table_name = $wpdb->prefix . 'sp_merge_backups';
@@ -210,11 +214,24 @@ class SP_Merge_Admin {
 
 		// $all_users drops the owner filter entirely rather than parameterizing
 		// it away, so there is no user_id value — real or sentinel — that could
-		// be mistaken for "every owner".
-		$where_sql  = $all_users ? '' : 'WHERE user_id = %d';
-		$query_args = $all_users
-			? array( $limit )
-			: array( $user_id ?? get_current_user_id(), $limit );
+		// be mistaken for "every owner". $status is appended the same way, only
+		// when actually requested, so the unfiltered call this method has always
+		// answered is completely unchanged.
+		$conditions = array();
+		$query_args = array();
+
+		if ( ! $all_users ) {
+			$conditions[] = 'user_id = %d';
+			$query_args[] = $user_id ?? get_current_user_id();
+		}
+
+		if ( null !== $status ) {
+			$conditions[] = "{$status_sql} = %s";
+			$query_args[] = $status;
+		}
+
+		$where_sql    = empty( $conditions ) ? '' : 'WHERE ' . implode( ' AND ', $conditions );
+		$query_args[] = $limit;
 
 		$results = $wpdb->get_results(
 			$wpdb->prepare(
@@ -244,6 +261,12 @@ class SP_Merge_Admin {
 				'id'              => $row->backup_id,
 				'user_id'         => (int) $row->user_id,
 				'date'            => mysql2date( 'M j, Y g:i A', $row->created_at ),
+				// A machine-sortable alternative to 'date' above, for callers
+				// rendering a script-consumed format (CSV/JSON): 'M j, Y g:i A' is
+				// locale- and timezone-translated and neither sorts nor parses
+				// reliably. Not rendered anywhere by default — the admin screen and
+				// WP-CLI's --format=table both use 'date'.
+				'date_machine'    => mysql2date( 'Y-m-d H:i:s', $row->created_at, false ),
 				'status'          => (string) ( $row->status ?? 'active' ),
 				'primary_name'    => json_decode( $row->primary_name, true ) ?? __( 'Unknown', 'sportspress-player-merge' ),
 				'duplicate_names' => json_decode( $row->duplicate_names, true ) ?? array(),

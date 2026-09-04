@@ -152,6 +152,30 @@ sp_assert( null !== sp_test_last_log( 'success' ), 'the forced merge still repor
 sp_assert( in_array( 200, $GLOBALS['sp_deleted_posts'], true ), 'the duplicate player was actually deleted once forced' );
 
 /* -------------------------------------------------------------------------
+ * 3b. --porcelain prints only the backup ID on success — no "Merge
+ *     completed" prose, no resolution list — matching `wp post create
+ *     --porcelain`'s convention.
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+sp_test_set_player( 100, 'Primary Player' );
+sp_test_set_player( 200, 'Duplicate Player' );
+
+( new SP_Merge_CLI() )->merge(
+	array( '100', '200' ),
+	array( 'skip-preview' => true, 'yes' => true, 'porcelain' => true )
+);
+
+sp_assert_same( 1, count( $GLOBALS['spm_cli_log'] ), '--porcelain logs exactly one line' );
+$only_line = $GLOBALS['spm_cli_log'][0];
+sp_assert_same( 'log', $only_line['level'], 'the one porcelain line is a plain log, not a success/warning message' );
+sp_assert(
+	1 === preg_match( '/^merge_\d+_[a-zA-Z0-9]{8}$/', (string) $only_line['message'] ),
+	'--porcelain prints exactly the backup ID and nothing else'
+);
+sp_assert( in_array( 200, $GLOBALS['sp_deleted_posts'], true ), '--porcelain still actually performs the merge' );
+
+/* -------------------------------------------------------------------------
  * 4. Insufficient permissions and a missing-argument usage error both refuse
  *    before anything runs.
  * ---------------------------------------------------------------------- */
