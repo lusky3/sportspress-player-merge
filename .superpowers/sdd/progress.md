@@ -68,3 +68,36 @@ in commit 53c64f0 by renaming the plugin's flag to --owner everywhere
 (code, docblocks, README, tests). Full suite (26 files) green after this fix.
 
 ALL WORK COMPLETE. Branch ready for PR.
+
+--- Post-PR audit round (user request: run through /code-audit-methodology and /wordpress-pro) ---
+
+Two independent audits run against the merged branch (3a3293d..84dd8b4):
+a general 8-domain code audit and a WordPress-standards-specific review.
+Both flagged, independently, the same top issue (missing Throwable guard
+around generate_data()'s call chain, breaking this plugin's own documented
+convention) plus ~30 additional findings across security/architecture/
+error-handling/concurrency/database/api-design/devops and WP-specific
+capability/i18n/hooks/WPCS concerns.
+
+Fix Pass A (10 correctness/safety findings, commits 84dd8b4..6d59daf):
+Throwable guards, scan certainty-scoring divergence, event-count divergence,
+batch malformed-row rejection, shared merge lock (revert now participates),
+batch --yes requirement, backup_id propagation on failure, batch file-path
+validation, TOCTOU re-validation in execute_merge(), wp_json_encode() check.
+Verified clean by independent reviewer, including a byte-identical AJAX
+payload diff (old vs new find_duplicates()) proving zero behavior change
+to the certainty-scoring extraction — the highest-risk change in the pass.
+
+Fix Pass B (23 items — 3 regressions found while verifying Pass A, plus 20
+audit findings, commits 6d59daf..74a450f): --input-format rename, option
+validation, merge --porcelain, backups list --status-before-limit, shared
+resolve_target_user(), i18n wrapping + shared revert messages, docblock/
+wp-help cleanup, README/readme.txt fixes, release-ZIP exclusions, CI
+additions (wp help smoke test + tests/run-all.sh + phpcs config + version
+pins). Verified 22/23 correct; one real gap found (merge --porcelain didn't
+actually suppress the preview report unless --skip-preview was also passed)
+plus a missing /* translators: */ comment — both fixed directly in commit
+1c86ef1, confirmed via a new test case (--porcelain alone, no --skip-preview).
+
+Full suite green throughout (28 test files, 640+ checks). All work pushed;
+PR #39 remains open for CI + manual wp-binary sanity check before merge.
