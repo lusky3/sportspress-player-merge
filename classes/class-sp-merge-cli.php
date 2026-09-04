@@ -521,16 +521,19 @@ class SP_Merge_CLI {
 	 * : Skip the confirmation prompt.
 	 *
 	 * [--porcelain]
-	 * : On success, print only the backup ID and nothing else — no "Merge
-	 * completed" message, no per-cell resolution list. Matches `wp post
-	 * create --porcelain`'s convention. Has no effect on failure, which
-	 * always goes through the normal error path regardless.
+	 * : On success, print only the backup ID and nothing else — no preview
+	 * report, no "Merge completed" message, no per-cell resolution list.
+	 * Implies --skip-preview (the preview report would otherwise still be
+	 * printed to stdout ahead of the backup ID, defeating the point of a
+	 * machine-readable success line). Matches `wp post create --porcelain`'s
+	 * convention. Has no effect on failure, which always goes through the
+	 * normal error path regardless.
 	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp sp-merge merge 123 456 789
 	 *     wp sp-merge merge 123 456 --force --yes
-	 *     wp sp-merge merge 123 456 --skip-preview --yes --porcelain
+	 *     wp sp-merge merge 123 456 --yes --porcelain
 	 *
 	 * @param array $args       Positional arguments: primary ID, then duplicate ID(s).
 	 * @param array $assoc_args Associative arguments: skip-preview, force, yes, porcelain.
@@ -579,6 +582,11 @@ class SP_Merge_CLI {
 	 * a real run would refuse at, and never reaches confirm()/execute_merge() —
 	 * merge() never sets this key, so its own behavior is completely unaffected.
 	 *
+	 * `--porcelain` implies `--skip-preview` for the same reason merge() implies
+	 * it in its own docblock: printing the human preview report ahead of a
+	 * machine-readable backup ID defeats the point of porcelain output. batch()
+	 * never sets `porcelain`, so this has no effect on it.
+	 *
 	 * A Throwable raised while previewing (malformed legacy serialized meta walked
 	 * through deep_merge_arrays() raises a TypeError, which is not an Exception in
 	 * PHP 8) is caught and returned as a row failure for the same reason: a bad row
@@ -602,7 +610,7 @@ class SP_Merge_CLI {
 		}
 
 		try {
-			if ( ! isset( $assoc_args['skip-preview'] ) ) {
+			if ( ! isset( $assoc_args['skip-preview'] ) && ! isset( $assoc_args['porcelain'] ) ) {
 				$preview_data = ( new SP_Merge_Preview() )->generate_data( $result['primary_id'], $result['duplicate_ids'] );
 				$this->render_preview_data( $preview_data );
 			}

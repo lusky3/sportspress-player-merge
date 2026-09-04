@@ -331,7 +331,13 @@ class SP_Merge_Validation {
 
 		$user = is_numeric( $user_arg ) ? get_user_by( 'id', (int) $user_arg ) : get_user_by( 'login', $user_arg );
 		if ( ! $user ) {
-			\WP_CLI::error( sprintf( __( 'No user found matching "%s".', 'sportspress-player-merge' ), $user_arg ) );
+			\WP_CLI::error(
+				sprintf(
+					/* translators: %s: the --owner value (numeric ID or login) that did not match any user */
+					__( 'No user found matching "%s".', 'sportspress-player-merge' ),
+					$user_arg
+				)
+			);
 		}
 
 		$target_id = (int) $user->ID;

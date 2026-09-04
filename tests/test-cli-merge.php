@@ -176,6 +176,32 @@ sp_assert(
 sp_assert( in_array( 200, $GLOBALS['sp_deleted_posts'], true ), '--porcelain still actually performs the merge' );
 
 /* -------------------------------------------------------------------------
+ * 3c. --porcelain implies --skip-preview even when --skip-preview is not
+ *     itself passed — the preview report must never precede the porcelain
+ *     backup-ID line, or a script capturing stdout gets the report too.
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+sp_test_set_player( 100, 'Primary Player' );
+sp_test_set_player( 200, 'Duplicate Player' );
+
+( new SP_Merge_CLI() )->merge(
+	array( '100', '200' ),
+	array( 'yes' => true, 'porcelain' => true )
+);
+
+sp_assert_same(
+	1,
+	count( $GLOBALS['spm_cli_log'] ),
+	'--porcelain without --skip-preview still logs exactly one line, not a preview report plus the backup ID'
+);
+$only_line_3c = $GLOBALS['spm_cli_log'][0];
+sp_assert(
+	1 === preg_match( '/^merge_\d+_[a-zA-Z0-9]{8}$/', (string) $only_line_3c['message'] ),
+	'--porcelain alone still prints exactly the backup ID'
+);
+
+/* -------------------------------------------------------------------------
  * 4. Insufficient permissions and a missing-argument usage error both refuse
  *    before anything runs.
  * ---------------------------------------------------------------------- */
