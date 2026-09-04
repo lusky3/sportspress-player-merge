@@ -8,7 +8,7 @@ Tasks:
 1. Bootstrap gate + SP_Merge_Validation extraction — complete
 2. Backup cross-user support — complete
 3. SP_Merge_CLI skeleton + scan/preview + preview generate_data() — complete
-4. merge/revert/backups list/backups delete commands — pending
+4. merge/revert/backups list/backups delete commands — complete
 5. wp sp-merge batch — pending
 6. PHPStan wp-cli stubs support — pending
 
@@ -27,3 +27,17 @@ Task 3: complete (commits eee4607..e472fff, review: Approved).
   'backups_list')) calls already specified in docs/plans/wp-cli-plan.md's
   Task 4 text (three add_command calls total) — use that, not the Task 3
   report's guidance, when dispatching Task 4.
+Task 4: complete (commits de64f82..4014057, review: Approved).
+  Registration correction was applied and re-verified independently by the
+  Task 4 reviewer (sound per WP-CLI's documented method-name-to-hyphenated-
+  leaf convention) — no residual concern for Task 5 or the final review.
+  Minor findings recorded for the final whole-branch review (non-blocking):
+  no test exercises "--force alone, no --yes" reaching the interactive
+  confirm() for merge()/revert() (code is correct, just not directly
+  asserted); a couple of user-facing strings (merge success message,
+  backups-delete confirmation prompt) were invented since the brief didn't
+  specify exact wording — no functional issue.
+  Actual WP-CLI registration mechanics still unverified against a real `wp`
+  binary (none available in this sandbox) — recommend `wp help sp-merge
+  backups list` as a live sanity check before first production use. Carry
+  this into the final report to the user.
