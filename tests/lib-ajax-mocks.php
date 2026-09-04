@@ -124,4 +124,5 @@ $sp_ajax_class_file = getenv( 'SP_MERGE_TEST_AJAX_CLASS' );
 if ( ! $sp_ajax_class_file ) {
 	$sp_ajax_class_file = dirname( __DIR__ ) . '/classes/class-sp-merge-ajax.php';
 }
+require_once dirname( __DIR__ ) . '/classes/class-sp-merge-validation.php';
 require_once $sp_ajax_class_file;

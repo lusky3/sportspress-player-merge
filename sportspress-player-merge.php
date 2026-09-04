@@ -92,7 +92,7 @@ class SportsPress_Player_Merge_Init {
 	 * Initialize the plugin — admin only.
 	 */
 	public function init(): void {
-		if ( ! is_admin() && ! wp_doing_ajax() ) {
+		if ( ! is_admin() && ! wp_doing_ajax() && ! ( defined( 'WP_CLI' ) && WP_CLI ) ) {
 			return;
 		}
 
@@ -124,6 +124,7 @@ class SportsPress_Player_Merge_Init {
 			'class-sp-merge-name-matcher.php',
 			'class-sp-merge-controller.php',
 			'class-sp-merge-admin.php',
+			'class-sp-merge-validation.php',
 			'class-sp-merge-ajax.php',
 			'class-sp-merge-processor.php',
 			'class-sp-merge-backup.php',
