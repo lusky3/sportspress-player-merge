@@ -52,3 +52,4 @@ Task 5: complete (commits db81175..bce6945, review: Approved).
   merge/revert/backups/batch — flagged by two implementers now, never
   restructured without instruction. Worth the final whole-branch reviewer's
   judgment on whether a follow-up split is warranted (not this branch).
+Task 6: complete (commits b0846ac..7180f98, review clean). All 6 tasks done.
