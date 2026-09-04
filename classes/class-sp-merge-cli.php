@@ -80,7 +80,7 @@ class SP_Merge_CLI {
 	 */
 	public function scan( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'edit_sp_players' ) ) {
-			\WP_CLI::error( 'Insufficient permissions.' );
+			\WP_CLI::error( __( 'Insufficient permissions.', 'sportspress-player-merge' ) );
 		}
 
 		// Validated as digit strings, not just cast: (int) silently reads a garbage
@@ -90,7 +90,7 @@ class SP_Merge_CLI {
 		// permanently deletes posts, not a value worth guessing at.
 		if ( isset( $assoc_args['min-certainty'] ) ) {
 			if ( 1 !== preg_match( '/^\d+$/', (string) $assoc_args['min-certainty'] ) || (int) $assoc_args['min-certainty'] > 100 ) {
-				\WP_CLI::error( '--min-certainty must be an integer between 0 and 100.' );
+				\WP_CLI::error( __( '--min-certainty must be an integer between 0 and 100.', 'sportspress-player-merge' ) );
 			}
 			$min_certainty = (int) $assoc_args['min-certainty'];
 		} else {
@@ -99,7 +99,7 @@ class SP_Merge_CLI {
 
 		if ( isset( $assoc_args['limit'] ) ) {
 			if ( 1 !== preg_match( '/^\d+$/', (string) $assoc_args['limit'] ) || (int) $assoc_args['limit'] < 1 ) {
-				\WP_CLI::error( '--limit must be a positive integer.' );
+				\WP_CLI::error( __( '--limit must be a positive integer.', 'sportspress-player-merge' ) );
 			}
 			$limit = (int) $assoc_args['limit'];
 		} else {
@@ -160,14 +160,22 @@ class SP_Merge_CLI {
 		if ( $scan['truncated'] ) {
 			\WP_CLI::warning(
 				sprintf(
-					'Scanned %1$d of %2$d players; %3$d were skipped.',
+					/* translators: 1: players scanned, 2: total published players, 3: players skipped */
+					__( 'Scanned %1$d of %2$d players; %3$d were skipped.', 'sportspress-player-merge' ),
 					$scan['scanned'],
 					$scan['total'],
 					$scan['total'] - $scan['scanned']
 				)
 			);
 		} else {
-			\WP_CLI::log( sprintf( 'Scanned %1$d of %2$d players.', $scan['scanned'], $scan['total'] ) );
+			\WP_CLI::log(
+				sprintf(
+					/* translators: 1: players scanned, 2: total published players */
+					__( 'Scanned %1$d of %2$d players.', 'sportspress-player-merge' ),
+					$scan['scanned'],
+					$scan['total']
+				)
+			);
 		}
 	}
 
@@ -299,7 +307,7 @@ class SP_Merge_CLI {
 	 */
 	public function preview( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'edit_sp_players' ) ) {
-			\WP_CLI::error( 'Insufficient permissions.' );
+			\WP_CLI::error( __( 'Insufficient permissions.', 'sportspress-player-merge' ) );
 		}
 
 		$primary_id    = absint( $args[0] ?? 0 );
@@ -368,12 +376,19 @@ class SP_Merge_CLI {
 			)
 		);
 
-		\WP_CLI::log( sprintf( 'Primary:    %s (#%d)', $data['primary']['name'], $data['primary']['id'] ) );
-		\WP_CLI::log( sprintf( 'Duplicates: %s', $duplicate_names ) );
+		\WP_CLI::log(
+			sprintf(
+				/* translators: 1: primary player name, 2: primary player ID */
+				__( 'Primary:    %1$s (#%2$d)', 'sportspress-player-merge' ),
+				$data['primary']['name'],
+				$data['primary']['id']
+			)
+		);
+		\WP_CLI::log( sprintf( /* translators: %s: comma-separated duplicate player names and IDs */ __( 'Duplicates: %s', 'sportspress-player-merge' ), $duplicate_names ) );
 		\WP_CLI::log( '' );
 
-		$this->render_comparison_section( 'Current team', $data['current_team'] );
-		$this->render_comparison_section( 'Past team(s)', $data['past_teams'] );
+		$this->render_comparison_section( __( 'Current team', 'sportspress-player-merge' ), $data['current_team'] );
+		$this->render_comparison_section( __( 'Past team(s)', 'sportspress-player-merge' ), $data['past_teams'] );
 
 		foreach ( $data['taxonomies'] as $taxonomy ) {
 			$this->render_comparison_section( $taxonomy['label'], $taxonomy );
@@ -381,7 +396,8 @@ class SP_Merge_CLI {
 
 		\WP_CLI::log(
 			sprintf(
-				'Events: primary %d, duplicates %d, result %d',
+				/* translators: 1: primary player's event count, 2: duplicates' combined event count, 3: resulting event count */
+				__( 'Events: primary %1$d, duplicates %2$d, result %3$d', 'sportspress-player-merge' ),
 				$data['events']['primary'],
 				$data['events']['duplicates'],
 				$data['events']['result']
@@ -392,7 +408,8 @@ class SP_Merge_CLI {
 			\WP_CLI::log( '' );
 			\WP_CLI::warning(
 				sprintf(
-					'%d event(s) contain both the primary and duplicate player(s). Performance stats in those events will be combined.',
+					/* translators: %d: number of events containing both the primary and a duplicate */
+					__( '%d event(s) contain both the primary and duplicate player(s). Performance stats in those events will be combined.', 'sportspress-player-merge' ),
 					$data['collision_count']
 				)
 			);
@@ -400,13 +417,15 @@ class SP_Merge_CLI {
 
 		$this->render_resolution_section(
 			$data['array_field_filled'],
-			"%d value(s) will be taken from a duplicate because the primary's cell is blank:",
+			/* translators: %d: number of values filled from a duplicate */
+			__( "%d value(s) will be taken from a duplicate because the primary's cell is blank:", 'sportspress-player-merge' ),
 			true
 		);
 
 		$this->render_resolution_section(
 			$data['array_field_conflicts'],
-			"%d value(s) differ between the players. The primary's value is kept and the duplicate's is discarded:",
+			/* translators: %d: number of conflicting values */
+			__( "%d value(s) differ between the players. The primary's value is kept and the duplicate's is discarded:", 'sportspress-player-merge' ),
 			false
 		);
 	}
@@ -421,10 +440,12 @@ class SP_Merge_CLI {
 		$primary = $row['primary'];
 		$primary = is_array( $primary ) ? implode( ', ', $primary ) : ( $primary ?? '' );
 
+		$none = __( 'None', 'sportspress-player-merge' );
+
 		\WP_CLI::log( sprintf( '%s:', $label ) );
-		\WP_CLI::log( sprintf( '  Primary:    %s', '' === $primary ? 'None' : $primary ) );
-		\WP_CLI::log( sprintf( '  Duplicates: %s', empty( $row['duplicates'] ) ? 'None' : implode( ', ', $row['duplicates'] ) ) );
-		\WP_CLI::log( sprintf( '  Result:     %s', empty( $row['result'] ) ? 'None' : implode( ', ', $row['result'] ) ) );
+		\WP_CLI::log( sprintf( /* translators: %s: value, or None */ __( '  Primary:    %s', 'sportspress-player-merge' ), '' === $primary ? $none : $primary ) );
+		\WP_CLI::log( sprintf( /* translators: %s: comma-separated values, or None */ __( '  Duplicates: %s', 'sportspress-player-merge' ), empty( $row['duplicates'] ) ? $none : implode( ', ', $row['duplicates'] ) ) );
+		\WP_CLI::log( sprintf( /* translators: %s: comma-separated values, or None */ __( '  Result:     %s', 'sportspress-player-merge' ), empty( $row['result'] ) ? $none : implode( ', ', $row['result'] ) ) );
 	}
 
 	/**
@@ -452,7 +473,8 @@ class SP_Merge_CLI {
 			if ( $is_filled ) {
 				\WP_CLI::log(
 					sprintf(
-						'  %1$s — the duplicate\'s value "%2$s" will be used (player %3$d)',
+						/* translators: 1: field address, 2: value used, 3: duplicate player ID */
+						__( '  %1$s — the duplicate\'s value "%2$s" will be used (player %3$d)', 'sportspress-player-merge' ),
 						$address,
 						$kept,
 						(int) $resolution['duplicate_id']
@@ -461,7 +483,8 @@ class SP_Merge_CLI {
 			} else {
 				\WP_CLI::log(
 					sprintf(
-						'  %1$s — keeping "%2$s", discarding "%3$s" (player %4$d)',
+						/* translators: 1: field address, 2: value kept, 3: value discarded, 4: duplicate player ID */
+						__( '  %1$s — keeping "%2$s", discarding "%3$s" (player %4$d)', 'sportspress-player-merge' ),
 						$address,
 						$kept,
 						SP_Merge_Processor::format_resolution_value( $resolution['discarded'] ),
@@ -517,14 +540,14 @@ class SP_Merge_CLI {
 	 */
 	public function merge( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
-			\WP_CLI::error( 'Insufficient permissions.' );
+			\WP_CLI::error( __( 'Insufficient permissions.', 'sportspress-player-merge' ) );
 		}
 
 		$primary_raw   = $args[0] ?? null;
 		$duplicate_raw = array_slice( $args, 1 );
 
 		if ( null === $primary_raw || empty( $duplicate_raw ) ) {
-			\WP_CLI::error( 'Usage: wp sp-merge merge <primary-id> <duplicate-id>...' );
+			\WP_CLI::error( __( 'Usage: wp sp-merge merge <primary-id> <duplicate-id>...', 'sportspress-player-merge' ) );
 		}
 
 		$porcelain = isset( $assoc_args['porcelain'] );
@@ -616,7 +639,7 @@ class SP_Merge_CLI {
 				return array(
 					'success'   => false,
 					'backup_id' => null,
-					'message'   => 'Merge refused: survivor warning(s) above. Re-run with --force to override.',
+					'message'   => __( 'Merge refused: survivor warning(s) above. Re-run with --force to override.', 'sportspress-player-merge' ),
 				);
 			}
 
@@ -628,7 +651,8 @@ class SP_Merge_CLI {
 				'success'   => true,
 				'backup_id' => null,
 				'message'   => sprintf(
-					'DRY RUN: would merge %1$d player(s) into #%2$d.',
+					/* translators: 1: number of duplicate players, 2: primary player ID */
+					__( 'DRY RUN: would merge %1$d player(s) into #%2$d.', 'sportspress-player-merge' ),
 					count( $result['duplicate_ids'] ),
 					$result['primary_id']
 				),
@@ -636,13 +660,14 @@ class SP_Merge_CLI {
 		}
 
 		$question = sprintf(
-			'Merge %1$d player(s) into #%2$d? This permanently deletes the duplicate posts.',
+			/* translators: 1: number of duplicate players, 2: primary player ID */
+			__( 'Merge %1$d player(s) into #%2$d? This permanently deletes the duplicate posts.', 'sportspress-player-merge' ),
 			count( $result['duplicate_ids'] ),
 			$result['primary_id']
 		);
 
 		if ( $warning_override ) {
-			$question = 'Survivor warning overridden — see above. ' . $question;
+			$question = __( 'Survivor warning overridden — see above. ', 'sportspress-player-merge' ) . $question;
 		}
 
 		\WP_CLI::confirm( $question, $assoc_args );
@@ -666,7 +691,7 @@ class SP_Merge_CLI {
 		// message and resolution list are unaffected), and porcelain's contract is
 		// to print only the backup ID on success — no prose, no resolution list.
 		if ( ! isset( $assoc_args['porcelain'] ) ) {
-			\WP_CLI::success( sprintf( 'Merge completed. Backup ID: %s', $merge_result['backup_id'] ) );
+			\WP_CLI::success( sprintf( /* translators: %s: backup ID */ __( 'Merge completed. Backup ID: %s', 'sportspress-player-merge' ), $merge_result['backup_id'] ) );
 
 			foreach ( (array) ( $merge_result['resolutions'] ?? array() ) as $resolution ) {
 				$address = SP_Merge_Processor::format_resolution_path( $resolution );
@@ -675,7 +700,8 @@ class SP_Merge_CLI {
 				if ( 'conflict' === $resolution['action'] ) {
 					\WP_CLI::log(
 						sprintf(
-							'  %1$s — keeping "%2$s", discarding "%3$s" (player %4$d)',
+							/* translators: 1: field address, 2: value kept, 3: value discarded, 4: duplicate player ID */
+							__( '  %1$s — keeping "%2$s", discarding "%3$s" (player %4$d)', 'sportspress-player-merge' ),
 							$address,
 							$kept,
 							SP_Merge_Processor::format_resolution_value( $resolution['discarded'] ),
@@ -685,7 +711,8 @@ class SP_Merge_CLI {
 				} else {
 					\WP_CLI::log(
 						sprintf(
-							'  %1$s — the duplicate\'s value "%2$s" was used (player %3$d)',
+							/* translators: 1: field address, 2: value used, 3: duplicate player ID */
+							__( '  %1$s — the duplicate\'s value "%2$s" was used (player %3$d)', 'sportspress-player-merge' ),
 							$address,
 							$kept,
 							(int) $resolution['duplicate_id']
@@ -780,7 +807,7 @@ class SP_Merge_CLI {
 	 */
 	public function batch( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
-			\WP_CLI::error( 'Insufficient permissions.' );
+			\WP_CLI::error( __( 'Insufficient permissions.', 'sportspress-player-merge' ) );
 		}
 
 		// Checked before anything else, and before a single row is read: WP-CLI's
@@ -792,21 +819,21 @@ class SP_Merge_CLI {
 		// --yes to confirm, and requiring it anyway would just be busywork for an
 		// operator checking what a batch would do.
 		if ( ! isset( $assoc_args['dry-run'] ) && ! isset( $assoc_args['yes'] ) ) {
-			\WP_CLI::error( '--yes is required for batch — it is not interactive. Use merge to confirm a single operation interactively.' );
+			\WP_CLI::error( __( '--yes is required for batch — it is not interactive. Use merge to confirm a single operation interactively.', 'sportspress-player-merge' ) );
 		}
 
 		if ( isset( $assoc_args['stop-on-error'] ) && isset( $assoc_args['continue-on-error'] ) ) {
-			\WP_CLI::error( 'Pass either --stop-on-error or --continue-on-error, not both.' );
+			\WP_CLI::error( __( 'Pass either --stop-on-error or --continue-on-error, not both.', 'sportspress-player-merge' ) );
 		}
 
 		$log_path = $assoc_args['log'] ?? null;
 		if ( null === $log_path || '' === $log_path ) {
-			\WP_CLI::error( '--log is required.' );
+			\WP_CLI::error( __( '--log is required.', 'sportspress-player-merge' ) );
 		}
 
 		$file = $args[0] ?? null;
 		if ( null === $file ) {
-			\WP_CLI::error( 'Usage: wp sp-merge batch <file> --yes --log=<path>' );
+			\WP_CLI::error( __( 'Usage: wp sp-merge batch <file> --yes --log=<path>', 'sportspress-player-merge' ) );
 		}
 
 		// is_file() is false for every stream-wrapper path (http://, php://, ...),
@@ -815,17 +842,17 @@ class SP_Merge_CLI {
 		// turns a mistyped local path into this clean error instead of a raw
 		// file_get_contents() warning followed by one.
 		if ( ! is_file( $file ) || ! is_readable( $file ) ) {
-			\WP_CLI::error( sprintf( 'Cannot read input file: %s', $file ) );
+			\WP_CLI::error( sprintf( /* translators: %s: file path */ __( 'Cannot read input file: %s', 'sportspress-player-merge' ), $file ) );
 		}
 
 		$format = $assoc_args['input-format'] ?? $this->sniff_batch_format( $file );
 		if ( null === $format ) {
-			\WP_CLI::error( 'Cannot determine input format: pass --input-format=<csv|json>, or use a .csv/.json file extension.' );
+			\WP_CLI::error( __( 'Cannot determine input format: pass --input-format=<csv|json>, or use a .csv/.json file extension.', 'sportspress-player-merge' ) );
 		}
 
 		$contents = file_get_contents( $file );
 		if ( false === $contents ) {
-			\WP_CLI::error( sprintf( 'Could not read file: %s', $file ) );
+			\WP_CLI::error( sprintf( /* translators: %s: file path */ __( 'Could not read file: %s', 'sportspress-player-merge' ), $file ) );
 		}
 
 		$rows = 'csv' === $format ? $this->parse_batch_csv( $contents ) : $this->parse_batch_json( $contents );
@@ -834,12 +861,12 @@ class SP_Merge_CLI {
 		// typo'd --log directory should be one clean error, not a PHP warning.
 		$log_dir = dirname( $log_path );
 		if ( ! is_dir( $log_dir ) || ! ( is_writable( $log_path ) || is_writable( $log_dir ) ) ) {
-			\WP_CLI::error( sprintf( 'Cannot write log file: %s (its directory must exist, and the log must be creatable or writable)', $log_path ) );
+			\WP_CLI::error( sprintf( /* translators: %s: log file path */ __( 'Cannot write log file: %s (its directory must exist, and the log must be creatable or writable)', 'sportspress-player-merge' ), $log_path ) );
 		}
 
 		$log_handle = fopen( $log_path, 'a' );
 		if ( false === $log_handle ) {
-			\WP_CLI::error( sprintf( 'Could not open log file for writing: %s', $log_path ) );
+			\WP_CLI::error( sprintf( /* translators: %s: log file path */ __( 'Could not open log file for writing: %s', 'sportspress-player-merge' ), $log_path ) );
 		}
 
 		$continue_on_error = isset( $assoc_args['continue-on-error'] );
@@ -885,7 +912,13 @@ class SP_Merge_CLI {
 
 			++$failed;
 			\WP_CLI::warning(
-				sprintf( 'Row %1$d (primary #%2$d): %3$s', $processed, $row['primary_id'], $outcome['message'] )
+				sprintf(
+					/* translators: 1: row number, 2: primary player ID, 3: failure message */
+					__( 'Row %1$d (primary #%2$d): %3$s', 'sportspress-player-merge' ),
+					$processed,
+					$row['primary_id'],
+					$outcome['message']
+				)
 			);
 
 			if ( ! $continue_on_error ) {
@@ -900,7 +933,8 @@ class SP_Merge_CLI {
 		// this ends in.
 		\WP_CLI::log(
 			sprintf(
-				'Processed %1$d of %2$d row(s): %3$d succeeded, %4$d failed, %5$d remaining.',
+				/* translators: 1: rows processed, 2: total rows, 3: rows succeeded, 4: rows failed, 5: rows remaining */
+				__( 'Processed %1$d of %2$d row(s): %3$d succeeded, %4$d failed, %5$d remaining.', 'sportspress-player-merge' ),
 				$processed,
 				$total,
 				$succeeded,
@@ -911,16 +945,21 @@ class SP_Merge_CLI {
 
 		if ( ! $continue_on_error && $failed > 0 ) {
 			\WP_CLI::error(
-				sprintf( 'Batch halted after row %1$d failed. %2$d row(s) remaining unprocessed.', $processed, $total - $processed )
+				sprintf(
+					/* translators: 1: row the batch halted after, 2: rows remaining unprocessed */
+					__( 'Batch halted after row %1$d failed. %2$d row(s) remaining unprocessed.', 'sportspress-player-merge' ),
+					$processed,
+					$total - $processed
+				)
 			);
 		}
 
 		if ( $failed > 0 ) {
-			\WP_CLI::warning( sprintf( '%d row(s) failed. See %s for details.', $failed, $log_path ) );
+			\WP_CLI::warning( sprintf( /* translators: 1: number of failed rows, 2: log file path */ __( '%1$d row(s) failed. See %2$s for details.', 'sportspress-player-merge' ), $failed, $log_path ) );
 			return;
 		}
 
-		\WP_CLI::success( sprintf( 'Batch completed: %d row(s) succeeded.', $succeeded ) );
+		\WP_CLI::success( sprintf( /* translators: %d: number of rows succeeded */ __( 'Batch completed: %d row(s) succeeded.', 'sportspress-player-merge' ), $succeeded ) );
 	}
 
 	/**
@@ -1028,7 +1067,8 @@ class SP_Merge_CLI {
 				$rows[] = $this->malformed_batch_row(
 					absint( $fields[0] ?? 0 ),
 					sprintf(
-						'Malformed row %1$d: expected exactly 2 comma-separated fields (primary_id,duplicate_ids), found %2$d in "%3$s". Join multiple duplicate IDs with ";", not ",".',
+						/* translators: 1: row number, 2: fields found, 3: raw row text */
+						__( 'Malformed row %1$d: expected exactly 2 comma-separated fields (primary_id,duplicate_ids), found %2$d in "%3$s". Join multiple duplicate IDs with ";", not ",".', 'sportspress-player-merge' ),
 						$number,
 						count( $fields ),
 						$line
@@ -1040,7 +1080,7 @@ class SP_Merge_CLI {
 			if ( 1 !== preg_match( '/^\d+$/', $fields[0] ) ) {
 				$rows[] = $this->malformed_batch_row(
 					0,
-					sprintf( 'Malformed row %1$d: primary_id "%2$s" is not a player ID.', $number, $fields[0] )
+					sprintf( /* translators: 1: row number, 2: raw primary_id value */ __( 'Malformed row %1$d: primary_id "%2$s" is not a player ID.', 'sportspress-player-merge' ), $number, $fields[0] )
 				);
 				continue;
 			}
@@ -1048,7 +1088,7 @@ class SP_Merge_CLI {
 			if ( 1 !== preg_match( '/^\d+(;\d+)*$/', $fields[1] ) ) {
 				$rows[] = $this->malformed_batch_row(
 					absint( $fields[0] ),
-					sprintf( 'Malformed row %1$d: duplicate_ids "%2$s" must be one player ID, or several joined with ";".', $number, $fields[1] )
+					sprintf( /* translators: 1: row number, 2: raw duplicate_ids value */ __( 'Malformed row %1$d: duplicate_ids "%2$s" must be one player ID, or several joined with ";".', 'sportspress-player-merge' ), $number, $fields[1] )
 				);
 				continue;
 			}
@@ -1099,7 +1139,7 @@ class SP_Merge_CLI {
 		$decoded = json_decode( $contents, true );
 
 		if ( ! is_array( $decoded ) ) {
-			\WP_CLI::error( 'Invalid JSON input: expected an array of {"primary_id":.., "duplicate_ids":[..]} objects.' );
+			\WP_CLI::error( __( 'Invalid JSON input: expected an array of {"primary_id":.., "duplicate_ids":[..]} objects.', 'sportspress-player-merge' ) );
 		}
 
 		$rows   = array();
@@ -1111,7 +1151,7 @@ class SP_Merge_CLI {
 			if ( ! is_array( $entry ) ) {
 				$rows[] = $this->malformed_batch_row(
 					0,
-					sprintf( 'Malformed row %d: expected a {"primary_id":.., "duplicate_ids":[..]} object.', $number )
+					sprintf( /* translators: %d: row number */ __( 'Malformed row %d: expected a {"primary_id":.., "duplicate_ids":[..]} object.', 'sportspress-player-merge' ), $number )
 				);
 				continue;
 			}
@@ -1119,7 +1159,7 @@ class SP_Merge_CLI {
 			if ( ! $this->is_player_id( $entry['primary_id'] ?? null ) ) {
 				$rows[] = $this->malformed_batch_row(
 					0,
-					sprintf( 'Malformed row %d: primary_id must be a positive player ID.', $number )
+					sprintf( /* translators: %d: row number */ __( 'Malformed row %d: primary_id must be a positive player ID.', 'sportspress-player-merge' ), $number )
 				);
 				continue;
 			}
@@ -1130,7 +1170,8 @@ class SP_Merge_CLI {
 				$rows[] = $this->malformed_batch_row(
 					absint( $entry['primary_id'] ),
 					sprintf(
-						'Malformed row %1$d: duplicate_ids must be a non-empty array of player IDs, got %2$s.',
+						/* translators: 1: row number, 2: what duplicate_ids actually was */
+						__( 'Malformed row %1$d: duplicate_ids must be a non-empty array of player IDs, got %2$s.', 'sportspress-player-merge' ),
 						$number,
 						is_string( $duplicates ) ? '"' . $duplicates . '"' : gettype( $duplicates )
 					)
@@ -1148,7 +1189,7 @@ class SP_Merge_CLI {
 			if ( ! empty( $invalid ) ) {
 				$rows[] = $this->malformed_batch_row(
 					absint( $entry['primary_id'] ),
-					sprintf( 'Malformed row %d: every duplicate_ids entry must be a positive player ID.', $number )
+					sprintf( /* translators: %d: row number */ __( 'Malformed row %d: every duplicate_ids entry must be a positive player ID.', 'sportspress-player-merge' ), $number )
 				);
 				continue;
 			}
@@ -1225,12 +1266,12 @@ class SP_Merge_CLI {
 	 */
 	public function revert( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
-			\WP_CLI::error( 'Insufficient permissions.' );
+			\WP_CLI::error( __( 'Insufficient permissions.', 'sportspress-player-merge' ) );
 		}
 
 		$backup_id = $args[0] ?? null;
 		if ( null === $backup_id ) {
-			\WP_CLI::error( 'Usage: wp sp-merge revert <backup-id>' );
+			\WP_CLI::error( __( 'Usage: wp sp-merge revert <backup-id>', 'sportspress-player-merge' ) );
 		}
 
 		$owner_id = SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
@@ -1241,14 +1282,11 @@ class SP_Merge_CLI {
 		// having written anything.
 		$attempt = $backup->revert( $backup_id, false, $owner_id );
 
-		// NOTE: the two success strings below ('Merge reverted successfully' and,
-		// further down, 'Merge reverted using the override. Values changed since
-		// the merge were discarded.') are copy-pasted from the translatable
-		// strings SP_Merge_Ajax::revert_merge() sends via send_error()/wp_send_json.
-		// They must be kept in sync by hand if that wording ever changes — there is
-		// no shared constant/method between the AJAX and CLI layers for this today.
+		// The success message is SP_Merge_Validation::revert_success_message() —
+		// shared with SP_Merge_Ajax::revert_merge() so this wording is defined
+		// exactly once, not hand-copied and kept in sync between the two layers.
 		if ( $attempt['success'] ) {
-			\WP_CLI::success( 'Merge reverted successfully' );
+			\WP_CLI::success( SP_Merge_Validation::revert_success_message( false ) );
 			return;
 		}
 
@@ -1259,7 +1297,7 @@ class SP_Merge_CLI {
 		}
 
 		\WP_CLI::warning( $attempt['message'] );
-		\WP_CLI::confirm( 'Override and revert anyway? Everything listed above was written after the merge and will be permanently discarded.', $assoc_args );
+		\WP_CLI::confirm( __( 'Override and revert anyway? Everything listed above was written after the merge and will be permanently discarded.', 'sportspress-player-merge' ), $assoc_args );
 
 		$forced = $backup->revert( $backup_id, true, $owner_id );
 
@@ -1267,6 +1305,6 @@ class SP_Merge_CLI {
 			\WP_CLI::error( $forced['message'] );
 		}
 
-		\WP_CLI::success( 'Merge reverted using the override. Values changed since the merge were discarded.' );
+		\WP_CLI::success( SP_Merge_Validation::revert_success_message( true ) );
 	}
 }

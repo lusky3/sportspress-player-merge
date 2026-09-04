@@ -120,9 +120,7 @@ class SP_Merge_Ajax {
 			if ( $result['success'] ) {
 				wp_send_json_success(
 					array(
-						'message' => $force
-							? __( 'Merge reverted using the override. Values changed since the merge were discarded.', 'sportspress-player-merge' )
-							: __( 'Merge reverted successfully', 'sportspress-player-merge' ),
+						'message' => SP_Merge_Validation::revert_success_message( $force ),
 					)
 				);
 			} else {

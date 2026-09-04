@@ -292,6 +292,23 @@ class SP_Merge_Validation {
 	}
 
 	/**
+	 * The operator-facing success message for a completed revert.
+	 *
+	 * Shared by SP_Merge_Ajax::revert_merge() and SP_Merge_CLI::revert() so
+	 * there is exactly one translatable definition of this wording, rather than
+	 * two hand-copied literals that had to be kept in sync by hand whenever it
+	 * changed.
+	 *
+	 * @param bool $forced Whether this revert used the values-changed override.
+	 * @return string
+	 */
+	public static function revert_success_message( bool $forced ): string {
+		return $forced
+			? __( 'Merge reverted using the override. Values changed since the merge were discarded.', 'sportspress-player-merge' )
+			: __( 'Merge reverted successfully', 'sportspress-player-merge' );
+	}
+
+	/**
 	 * Resolve which user a WP-CLI subcommand should act on behalf of.
 	 *
 	 * Defaults to the current user. An explicit target is only permitted for a

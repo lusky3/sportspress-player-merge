@@ -82,8 +82,8 @@ class SP_Merge_CLI_Backups {
 		if ( ! current_user_can( $required_cap ) ) {
 			\WP_CLI::error(
 				$all_users
-					? 'Only an Administrator (delete_sp_players) can list every user\'s backups.'
-					: 'Insufficient permissions.'
+					? __( 'Only an Administrator (delete_sp_players) can list every user\'s backups.', 'sportspress-player-merge' )
+					: __( 'Insufficient permissions.', 'sportspress-player-merge' )
 			);
 		}
 
@@ -108,7 +108,7 @@ class SP_Merge_CLI_Backups {
 		}
 
 		if ( false === $backups ) {
-			\WP_CLI::error( 'Failed to retrieve backup data.' );
+			\WP_CLI::error( __( 'Failed to retrieve backup data.', 'sportspress-player-merge' ) );
 		}
 
 		// --status is applied by get_recent_backups() itself now, in SQL, before
@@ -183,11 +183,11 @@ class SP_Merge_CLI_Backups {
 	 */
 	public function delete( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'delete_sp_players' ) ) {
-			\WP_CLI::error( 'Insufficient permissions.' );
+			\WP_CLI::error( __( 'Insufficient permissions.', 'sportspress-player-merge' ) );
 		}
 
 		if ( empty( $args ) ) {
-			\WP_CLI::error( 'Usage: wp sp-merge backups delete <backup-id>...' );
+			\WP_CLI::error( __( 'Usage: wp sp-merge backups delete <backup-id>...', 'sportspress-player-merge' ) );
 		}
 
 		// The helper's own capability check always passes here — delete_sp_players
@@ -195,9 +195,13 @@ class SP_Merge_CLI_Backups {
 		// with every other subcommand, so it is reused rather than duplicated.
 		$owner_id = SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
 
-		\WP_CLI::warning( 'Deleting a backup permanently removes the only recovery path for that merge.' );
+		\WP_CLI::warning( __( 'Deleting a backup permanently removes the only recovery path for that merge.', 'sportspress-player-merge' ) );
 		\WP_CLI::confirm(
-			sprintf( 'Delete %d backup(s)? This cannot be undone.', count( $args ) ),
+			sprintf(
+				/* translators: %d: number of backups to delete */
+				__( 'Delete %d backup(s)? This cannot be undone.', 'sportspress-player-merge' ),
+				count( $args )
+			),
 			$assoc_args
 		);
 
@@ -210,6 +214,12 @@ class SP_Merge_CLI_Backups {
 			\WP_CLI::error( $e->getMessage() );
 		}
 
-		\WP_CLI::success( sprintf( '%d backup(s) deleted.', $deleted ) );
+		\WP_CLI::success(
+			sprintf(
+				/* translators: %d: number of backups deleted */
+				__( '%d backup(s) deleted.', 'sportspress-player-merge' ),
+				$deleted
+			)
+		);
 	}
 }
