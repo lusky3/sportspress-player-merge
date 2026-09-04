@@ -265,6 +265,42 @@ unlink( $csv_path );
 unlink( $log_path );
 
 /* -------------------------------------------------------------------------
+ * 4b. --dry-run without --yes still runs: a dry run never reaches confirm(),
+ *     so there is nothing --yes would confirm, and requiring it anyway would
+ *     be an unintended regression (it used to be required unconditionally).
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+sp_test_batch_seed_players();
+
+$csv_path = sp_test_batch_write_file( SP_TEST_BATCH_CSV_CLEAN, 'csv' );
+$log_path = sp_test_batch_log_path();
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->batch(
+		array( $csv_path ),
+		array(
+			'skip-preview' => true,
+			'dry-run'      => true,
+			'log'          => $log_path,
+		)
+	);
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+
+sp_assert( null === $threw, '--dry-run without --yes does not refuse' . ( $threw ? ' (' . $threw->getMessage() . ')' : '' ) );
+
+$log_rows = sp_test_batch_read_log( $log_path );
+sp_assert_same( 2, count( $log_rows ), '--dry-run without --yes still processes and logs every row' );
+sp_assert_same( true, $log_rows[0]['success'] ?? null, 'a dry-run row reports success without --yes' );
+sp_assert_same( array(), $GLOBALS['sp_deleted_posts'], '--dry-run without --yes never deletes anything' );
+
+unlink( $csv_path );
+unlink( $log_path );
+
+/* -------------------------------------------------------------------------
  * 5. Missing --log errors immediately, before any input row is touched.
  * ---------------------------------------------------------------------- */
 

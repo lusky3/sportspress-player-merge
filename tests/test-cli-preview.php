@@ -249,6 +249,28 @@ sp_assert( null === $threw, 'a TypeError from the preview walk does not escape p
 sp_assert_contains( 'injected TypeError', (string) sp_test_last_log( 'warning' ), 'the operator is told what went wrong' );
 
 /* -------------------------------------------------------------------------
+ * 4d. The same Throwable, with --porcelain: a script must see WARN, never
+ *     silence — the warning() call alone goes to stderr and would otherwise
+ *     leave stdout with nothing printed at all.
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+sp_test_set_player( 100, 'Primary Player' );
+sp_test_set_player( 200, 'Duplicate Player' );
+sp_test_throw_on( 'get_post_meta', 100, 'TypeError' );
+
+$GLOBALS['spm_cli_log'] = array();
+$threw                  = null;
+try {
+	( new SP_Merge_CLI() )->preview( array( '100', '200' ), array( 'porcelain' => true ) );
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+
+sp_assert( null === $threw, '--porcelain does not let a TypeError from the preview walk escape' . ( $threw ? ' (' . get_class( $threw ) . ')' : '' ) );
+sp_assert_same( 'WARN', sp_test_last_log( 'log' ), '--porcelain prints WARN (never silence) when generate_data() throws' );
+
+/* -------------------------------------------------------------------------
  * 5. Lacking edit_sp_players refuses the preview outright.
  * ---------------------------------------------------------------------- */
 

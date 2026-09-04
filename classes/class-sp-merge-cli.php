@@ -91,6 +91,22 @@ class SP_Merge_CLI {
 		$scan   = ( new SP_Merge_Ajax() )->collect_scan_players();
 		$groups = SP_Merge_Name_Matcher::find_groups( $scan['players'] );
 
+		// Primed before the per-group certainty adjustment loop below, which calls
+		// get_post_meta()/get_post()/wp_get_post_terms() per group member: without
+		// this, each of those is an uncached, one-row-at-a-time query, exactly the
+		// N+1 SP_Merge_Ajax::find_duplicates() already primes against for the same
+		// loop.
+		$scan_player_ids = array();
+		foreach ( $groups as $group ) {
+			foreach ( $group['players'] as $member ) {
+				$scan_player_ids[] = (int) $member->ID;
+			}
+		}
+		if ( ! empty( $scan_player_ids ) ) {
+			update_meta_cache( 'post', $scan_player_ids );
+			update_object_term_cache( $scan_player_ids, 'sp_player' );
+		}
+
 		// Adjusted before anything is filtered or dropped: --min-certainty has to
 		// mean the same thing the admin screen's badge means, or a pair the
 		// browser demoted to "low confidence" would still pass --min-certainty=90
@@ -276,6 +292,13 @@ class SP_Merge_CLI {
 			// rather than an error() because this command's contract is to always
 			// exit 0 — a script branching on --porcelain reads the line, not the code.
 			\WP_CLI::warning( $e->getMessage() );
+
+			// A script relying on --porcelain must only ever see OK or WARN, never
+			// silence: without this, a Throwable here printed nothing to stdout at
+			// all, an undocumented third state.
+			if ( $porcelain ) {
+				\WP_CLI::log( 'WARN' );
+			}
 			return;
 		}
 
@@ -688,8 +711,8 @@ class SP_Merge_CLI {
 	 * : Proceed despite a survivor warning on any row (see `merge`'s --force).
 	 *
 	 * --yes
-	 * : Required. Skip the confirmation prompt for every row. `batch` is not
-	 * interactive — see above.
+	 * : Required, unless --dry-run is also passed. Skip the confirmation prompt
+	 * for every row. `batch` is not interactive — see above.
 	 *
 	 * --log=<path>
 	 * : Required. Path to append one JSON-Lines record to per processed row. The
@@ -717,7 +740,11 @@ class SP_Merge_CLI {
 		// confirm() calls a bare exit(0) when it cannot read a `y` — which is what
 		// fgets(STDIN) returns in a non-TTY context like cron — so an unattended
 		// `batch` without --yes would exit *successfully* having merged nothing.
-		if ( ! isset( $assoc_args['yes'] ) ) {
+		// --dry-run is exempt: it never reaches confirm() (run_one_merge() returns
+		// before that point whenever 'dry-run' is set), so there is nothing for
+		// --yes to confirm, and requiring it anyway would just be busywork for an
+		// operator checking what a batch would do.
+		if ( ! isset( $assoc_args['dry-run'] ) && ! isset( $assoc_args['yes'] ) ) {
 			\WP_CLI::error( '--yes is required for batch — it is not interactive. Use merge to confirm a single operation interactively.' );
 		}
 
