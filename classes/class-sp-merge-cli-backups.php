@@ -90,9 +90,20 @@ class SP_Merge_CLI_Backups {
 		$format  = $assoc_args['format'] ?? 'table';
 		$admin   = new SP_Merge_Admin();
 
-		$backups = isset( $assoc_args['limit'] )
-			? $admin->get_recent_backups( (int) $assoc_args['limit'], $user_id, $all_users )
-			: $admin->get_recent_backups( user_id: $user_id, all_users: $all_users );
+		// Pre-set so the catch below can hand control to WP_CLI::error() (which
+		// exits the process) without leaving a possibly-undefined read after it.
+		$backups = false;
+
+		try {
+			$backups = isset( $assoc_args['limit'] )
+				? $admin->get_recent_backups( (int) $assoc_args['limit'], $user_id, $all_users )
+				: $admin->get_recent_backups( user_id: $user_id, all_users: $all_users );
+		} catch ( Throwable $e ) {
+			// Throwable, not Exception: the rows being read carry decade-old
+			// serialized payloads, and malformed data raises a TypeError, which is
+			// not an Exception in PHP 8. Matches SP_Merge_Ajax::get_recent_backups().
+			\WP_CLI::error( $e->getMessage() );
+		}
 
 		if ( false === $backups ) {
 			\WP_CLI::error( 'Failed to retrieve backup data.' );
@@ -183,7 +194,14 @@ class SP_Merge_CLI_Backups {
 			$assoc_args
 		);
 
-		$deleted = ( new SP_Merge_Backup() )->delete_backups( $args, $owner_id );
+		$deleted = 0;
+
+		try {
+			$deleted = ( new SP_Merge_Backup() )->delete_backups( $args, $owner_id );
+		} catch ( Throwable $e ) {
+			// As on list() above, and matching SP_Merge_Ajax::delete_backup().
+			\WP_CLI::error( $e->getMessage() );
+		}
 
 		\WP_CLI::success( sprintf( '%d backup(s) deleted.', $deleted ) );
 	}

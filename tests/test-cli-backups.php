@@ -213,4 +213,60 @@ try {
 }
 sp_assert( null !== $threw, 'no backup IDs at all refuses with a usage message' );
 
+/* -------------------------------------------------------------------------
+ * 11. A Throwable out of either domain call becomes a clean WP-CLI error, not
+ *     an uncaught fatal — the same guard SP_Merge_Ajax::get_recent_backups()
+ *     and SP_Merge_Ajax::delete_backup() already have. A TypeError raised by
+ *     malformed legacy data is not an Exception in PHP 8.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * A $wpdb whose reads and writes raise a TypeError, as decade-old serialized
+ * payloads and third-party hooks can.
+ */
+class SP_Test_Throwing_WPDB extends SP_Test_CLI_Backup_WPDB {
+
+	public function get_results( $query ) {
+		throw new TypeError( 'injected TypeError from get_results()' );
+	}
+
+	public function query( $query ) {
+		if ( false !== strpos( $query, 'DELETE FROM' ) ) {
+			throw new TypeError( 'injected TypeError from query()' );
+		}
+		return parent::query( $query );
+	}
+}
+
+sp_test_cli_reset();
+$GLOBALS['wpdb'] = new SP_Test_Throwing_WPDB();
+
+$threw = null;
+try {
+	( new SP_Merge_CLI_Backups() )->list( array(), array() );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+
+sp_assert( $threw instanceof SP_Test_CLI_Error, 'a Throwable while listing backups becomes a WP-CLI error, not a fatal' );
+sp_assert_contains( 'injected TypeError', $threw ? $threw->getMessage() : '', 'the error says what actually went wrong' );
+
+sp_test_cli_reset();
+sp_test_seed_backup( 'merge_throwing', sp_test_backup_payload( 50, 51 ), 'active', null, null, 7 );
+$GLOBALS['wpdb'] = new SP_Test_Throwing_WPDB();
+
+$threw = null;
+try {
+	( new SP_Merge_CLI_Backups() )->delete( array( 'merge_throwing' ), array( 'yes' => true ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+
+sp_assert( $threw instanceof SP_Test_CLI_Error, 'a Throwable while deleting a backup becomes a WP-CLI error, not a fatal' );
+sp_assert_contains( 'injected TypeError', $threw ? $threw->getMessage() : '', 'that error also says what went wrong' );
+
 sp_test_done();
