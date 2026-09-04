@@ -11,9 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/**
- * Registers `wp sp-merge backups list` and `wp sp-merge backups delete`.
- *
+/*
  * Kept on its own class, registered at the `sp-merge backups` namespace (see
  * sportspress-player-merge.php), rather than as `backups_list()`/
  * `backups_delete()` methods on SP_Merge_CLI: WP-CLI maps every public method
@@ -28,6 +26,10 @@ if ( ! defined( 'ABSPATH' ) ) {
  * reserved words as bare functions) makes the one true spelling read
  * naturally: the class supplies the leaf verb, the registration supplies the
  * `sp-merge backups` namespace above it.
+ */
+/**
+ * List and delete recent SportsPress Player Merge backups from the command
+ * line.
  */
 class SP_Merge_CLI_Backups {
 

@@ -11,14 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/**
- * Registers the top-level wp sp-merge subcommands: scan, preview, merge,
- * revert, and batch.
- *
- * `scan` runs the duplicate-name scan headless and prints the matched groups.
- * `preview` runs SP_Merge_Preview's data comparison for an explicit selection
- * without merging anything.
- *
+/*
  * `backups list`/`backups delete` are registered from SP_Merge_CLI_Backups
  * instead (see classes/class-sp-merge-cli-backups.php): registering them as
  * methods here as well as under an explicit `sp-merge backups <verb>` command
@@ -26,6 +19,11 @@ if ( ! defined( 'ABSPATH' ) ) {
  * its own hyphenated leaf subcommand) a second, redundant spelling for the
  * same destructive operation — `wp sp-merge backups-list` alongside the
  * intended `wp sp-merge backups list`.
+ */
+/**
+ * Scan for, preview, execute, and revert SportsPress player merges from the
+ * command line — headless equivalents of the Player Merge admin screen, for
+ * scripting and bulk operations.
  */
 class SP_Merge_CLI {
 
@@ -263,14 +261,13 @@ class SP_Merge_CLI {
 		return $rows;
 	}
 
+	// Deliberately does not run SP_Merge_Validation::validate_merge_selection()
+	// first: this command is read-only and informational, so an operator can
+	// point it at any two IDs to see what SP_Merge_Preview would show, including
+	// IDs that would fail validation, without that failing loudly.
 	/**
-	 * Preview a merge without executing it.
-	 *
-	 * Deliberately does not run SP_Merge_Validation::validate_merge_selection()
-	 * first: this command is read-only and informational, so an operator can
-	 * point it at any two IDs to see what SP_Merge_Preview would show, including
-	 * IDs that would fail validation, without that failing loudly. Always exits
-	 * 0 — nothing here is a WP-CLI error condition.
+	 * Preview a merge without executing it. Always exits 0 — nothing here is a
+	 * WP-CLI error condition, even for an invalid or nonexistent selection.
 	 *
 	 * ## OPTIONS
 	 *
@@ -729,19 +726,19 @@ class SP_Merge_CLI {
 		);
 	}
 
+	// Rows are processed strictly in file order with a plain sequential loop —
+	// the shared `sp_merge_lock` (SP_Merge_Lock, taken by both
+	// SP_Merge_Processor::execute_merge() and SP_Merge_Backup::revert()) already
+	// serializes merges, so this deliberately adds no locking of its own.
 	/**
-	 * Run many merges from a CSV or JSON file, one `run_one_merge()` call per row.
+	 * Run many merges from a CSV or JSON file, one row per merge, logging one
+	 * JSON-Lines record per processed row.
 	 *
 	 * `--log` is mandatory rather than optional: the admin screen's backup list
 	 * only shows the 10 most recent backups per page, so a batch of any real size
 	 * needs its own externally recorded record of every backup ID it produced —
 	 * without one, there is no way to find, and so no way to revert, most of a
 	 * large batch's merges.
-	 *
-	 * Rows are processed strictly in file order with a plain sequential loop —
-	 * the shared `sp_merge_lock` (SP_Merge_Lock, taken by both
-	 * SP_Merge_Processor::execute_merge() and SP_Merge_Backup::revert()) already
-	 * serializes merges, so this deliberately adds no locking of its own.
 	 *
 	 * `--yes` is mandatory here, unlike on `merge`. Confirmation is asked per row,
 	 * and WP-CLI's confirm() exits 0 when it cannot read an answer — so without
