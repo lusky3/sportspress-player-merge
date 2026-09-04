@@ -97,37 +97,13 @@ namespace {
 		}
 	}
 
-	if ( ! function_exists( 'wp_using_ext_object_cache' ) ) {
-		function wp_using_ext_object_cache() {
-			return false;
-		}
-	}
-
-	if ( ! function_exists( 'wp_cache_add' ) ) {
-		function wp_cache_add( $key, $data, $group = '', $expire = 0 ) {
-			return true;
-		}
-	}
-
-	if ( ! function_exists( 'get_transient' ) ) {
-		/**
-		 * The merge lock is never held across two calls within one test, so a
-		 * constant "not locked" is enough — acquire_lock()/release_lock() just
-		 * need to not fatal.
-		 *
-		 * @param string $key Transient key.
-		 * @return false
-		 */
-		function get_transient( $key ) {
-			return false;
-		}
-	}
-
-	if ( ! function_exists( 'set_transient' ) ) {
-		function set_transient( $key, $value, $expiration = 0 ) {
-			return true;
-		}
-	}
+	/*
+	 * The object-cache and transient mocks SP_Merge_Lock needs live in
+	 * lib-backup-mocks.php (required above), where the transients are real state
+	 * rather than no-ops: SP_Merge_Backup::revert() now takes the same lock
+	 * SP_Merge_Processor::execute_merge() does, and a test has to be able to
+	 * pre-set that lock and see the refusal.
+	 */
 
 	if ( ! function_exists( 'do_action' ) ) {
 		function do_action( $hook, ...$args ) {
@@ -312,6 +288,28 @@ namespace {
 		public function get_results( $query ) {
 			list( $sql, $args ) = $this->cli_unpack( $query );
 
+			// SP_Merge_Validation::get_event_ids(): the event IDs themselves, for
+			// the preview's same-event collision check.
+			if ( false !== strpos( $sql, 'AS event_id' ) ) {
+				$wanted = array_map( 'strval', $args );
+				$out    = array();
+
+				foreach ( $GLOBALS['sp_meta_rows'] as $row ) {
+					if ( 'sp_player' !== $row['meta_key'] || ! in_array( (string) $row['meta_value'], $wanted, true ) ) {
+						continue;
+					}
+					if ( ! $this->is_event_post( (int) $row['post_id'] ) ) {
+						continue;
+					}
+					$out[] = (object) array(
+						'player_id' => $row['meta_value'],
+						'event_id'  => $row['post_id'],
+					);
+				}
+
+				return $out;
+			}
+
 			// SP_Merge_Validation::get_event_counts(): grouped counts for a batch of player IDs.
 			if ( false !== strpos( $sql, 'GROUP BY pm.meta_value' ) ) {
 				$wanted = array_map( 'strval', $args );
@@ -319,6 +317,9 @@ namespace {
 
 				foreach ( $GLOBALS['sp_meta_rows'] as $row ) {
 					if ( 'sp_player' !== $row['meta_key'] || ! in_array( (string) $row['meta_value'], $wanted, true ) ) {
+						continue;
+					}
+					if ( ! $this->is_event_post( (int) $row['post_id'] ) ) {
 						continue;
 					}
 					$counts[ $row['meta_value'] ] = ( $counts[ $row['meta_value'] ] ?? 0 ) + 1;
@@ -335,6 +336,28 @@ namespace {
 			}
 
 			return parent::get_results( $query );
+		}
+
+		/**
+		 * Stand in for the real queries' `JOIN wp_posts ... post_type = 'sp_event'`.
+		 *
+		 * The meta store here has no notion of a post type, so a row counts as an
+		 * event unless its post was explicitly registered as something else — which
+		 * is what lets an sp_list fixture (sp_test_seed_list_membership()) prove the
+		 * post-type restriction while every existing sp_test_seed_event() fixture,
+		 * which registers no post at all, keeps counting as an event.
+		 *
+		 * @param int $post_id Post ID carrying the sp_player meta row.
+		 * @return bool
+		 */
+		private function is_event_post( int $post_id ): bool {
+			$post = $GLOBALS['sp_posts'][ $post_id ] ?? null;
+
+			if ( ! $post || ! isset( $post->post_type ) ) {
+				return true;
+			}
+
+			return 'sp_event' === $post->post_type;
 		}
 
 		/**
@@ -371,6 +394,29 @@ namespace {
 	}
 
 	/**
+	 * Seed a squad-list membership: the same 'sp_player' meta row shape as an
+	 * event, but on an sp_list post.
+	 *
+	 * SportsPress stores list membership exactly like this (see
+	 * SP_Merge_Processor::update_player_list_references()), which is why every
+	 * count of a player's events has to restrict by post type: two players
+	 * sharing a squad list are not two players colliding in an event.
+	 *
+	 * @param int $list_id   sp_list post ID.
+	 * @param int $player_id Player ID appearing on that list.
+	 */
+	function sp_test_seed_list_membership( int $list_id, int $player_id ): void {
+		$GLOBALS['sp_posts'][ $list_id ] = (object) array(
+			'ID'          => $list_id,
+			'post_type'   => 'sp_list',
+			'post_title'  => 'List ' . $list_id,
+			'post_status' => 'publish',
+		);
+
+		sp_test_add_meta( $list_id, 'sp_player', (string) $player_id );
+	}
+
+	/**
 	 * Reset the CLI test harness's mutable state between scenarios.
 	 *
 	 * Mirrors sp_test_reset() from lib-backup-mocks.php (now also resetting the
@@ -392,6 +438,9 @@ namespace {
 		$GLOBALS['sp_insert_post_id'] = null;
 		$GLOBALS['sp_deleted_posts']  = array();
 		$GLOBALS['sp_terms_set']      = array();
+		$GLOBALS['sp_transients']     = array();
+		$GLOBALS['sp_meta_throws']    = array();
+		$GLOBALS['sp_player_terms']   = array();
 		sp_test_seed_roster( 0 );
 	}
 
@@ -399,6 +448,7 @@ namespace {
 	// SP_Merge_Processor, and SP_Merge_CLI/SP_Merge_CLI_Backups call into all of
 	// these plus SP_Merge_Ajax/SP_Merge_Validation/SP_Merge_Backup (already
 	// required by lib-ajax-mocks.php -> lib-backup-mocks.php) and SP_Merge_Admin.
+	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-lock.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-name-matcher.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-processor.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-preview.php';

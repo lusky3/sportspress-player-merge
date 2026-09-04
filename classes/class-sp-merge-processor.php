@@ -105,13 +105,6 @@ class SP_Merge_Processor {
 	private const NON_POSITIVE_BLANK_FIELDS = array( 'sp_leagues' );
 
 	/**
-	 * Transient key used for merge locking.
-	 *
-	 * @var string
-	 */
-	private const LOCK_KEY = 'sp_merge_lock';
-
-	/**
 	 * Post IDs whose meta was written during the current merge attempt.
 	 *
 	 * Tracked so the failure path can purge them from the object cache: ROLLBACK
@@ -142,6 +135,13 @@ class SP_Merge_Processor {
 	 * merge has committed. A failed merge marks it `failed` — which load_backup_data()
 	 * still accepts — so the operator keeps a usable recovery point.
 	 *
+	 * The selection is re-validated here, under the lock, even though every caller
+	 * validated it before calling: the caller's validation ran outside the lock,
+	 * so a concurrent operation holding the lock (another batch row, an admin
+	 * merge in a browser) can delete a duplicate in between. Without this the
+	 * delete loop's `if ( ! $post ) { continue; }` would silently no-op and the
+	 * merge would report success having done nothing.
+	 *
 	 * @param int   $primary_id    The player ID to keep.
 	 * @param int[] $duplicate_ids Player IDs to merge and delete.
 	 * @return array{success: bool, backup_id?: string, message?: string, resolutions?: array}
@@ -154,6 +154,20 @@ class SP_Merge_Processor {
 			return array(
 				'success' => false,
 				'message' => __( 'Another merge is in progress. Please wait and try again.', 'sportspress-player-merge' ),
+			);
+		}
+
+		// Re-check the selection now that nothing else can be merging: a handful
+		// of get_post() calls, most still warm in the object cache from the
+		// caller's own validation moments ago. Released explicitly rather than in
+		// the finally below, which only covers the try block that follows.
+		$revalidated = SP_Merge_Validation::validate_merge_selection( $primary_id, $duplicate_ids );
+		if ( ! $revalidated['valid'] ) {
+			$this->release_lock();
+
+			return array(
+				'success' => false,
+				'message' => $revalidated['error'],
 			);
 		}
 
@@ -260,30 +274,24 @@ class SP_Merge_Processor {
 	}
 
 	/**
-	 * Acquire an atomic merge lock.
+	 * Acquire the atomic merge lock.
+	 *
+	 * The implementation moved to SP_Merge_Lock so SP_Merge_Backup::revert() can
+	 * take the same lock — an unattended `wp sp-merge batch` and a revert typed
+	 * into a second shell are otherwise free to rewrite the same rows at once.
+	 * These two thin wrappers stay so the call sites below read unchanged.
 	 *
 	 * @return bool True if lock acquired.
 	 */
 	private function acquire_lock(): bool {
-		if ( wp_using_ext_object_cache() ) {
-			return wp_cache_add( self::LOCK_KEY, get_current_user_id(), 'sp_merge', 300 );
-		}
-		if ( get_transient( self::LOCK_KEY ) ) {
-			return false;
-		}
-		set_transient( self::LOCK_KEY, get_current_user_id(), 300 );
-		return true;
+		return SP_Merge_Lock::acquire();
 	}
 
 	/**
 	 * Release the merge lock.
 	 */
 	private function release_lock(): void {
-		if ( wp_using_ext_object_cache() ) {
-			wp_cache_delete( self::LOCK_KEY, 'sp_merge' );
-		} else {
-			delete_transient( self::LOCK_KEY );
-		}
+		SP_Merge_Lock::release();
 	}
 
 	/**

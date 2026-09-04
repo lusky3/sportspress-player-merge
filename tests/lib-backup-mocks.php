@@ -29,6 +29,9 @@ $GLOBALS['sp_posts']          = array();
 $GLOBALS['sp_insert_post_id'] = null;
 $GLOBALS['sp_deleted_posts']  = array();
 $GLOBALS['sp_terms_set']      = array();
+$GLOBALS['sp_transients']     = array();
+$GLOBALS['sp_meta_throws']    = array();
+$GLOBALS['sp_player_terms']   = array();
 
 /* -------------------------------------------------------------------------
  * Assertions
@@ -145,7 +148,43 @@ function sp_test_add_meta( int $post_id, string $key, $value, ?int $meta_id = nu
 	return $meta_id;
 }
 
+/**
+ * Arm a Throwable to be raised from one of the mocked meta functions.
+ *
+ * Mirrors bootstrap.php's spm_throw_on() for the harnesses built on this file:
+ * on a real install this is third-party code hooked into get_post_meta /
+ * add_post_meta / update_post_meta raising an Error, or malformed decade-old
+ * serialized data raising a TypeError inside the merge/preview walk. One-shot,
+ * so the next call for the same post proceeds normally.
+ *
+ * @param string $function   Mocked function name: get_post_meta, add_post_meta, update_post_meta.
+ * @param int    $post_id    Post ID whose next call throws.
+ * @param string $class_name Throwable class to raise.
+ */
+function sp_test_throw_on( string $function, int $post_id, string $class_name = 'TypeError' ): void {
+	$GLOBALS['sp_meta_throws'][ $function ][ $post_id ] = $class_name;
+}
+
+/**
+ * Raise, once, whatever sp_test_throw_on() armed for this call.
+ *
+ * @param string $function Mocked function name.
+ * @param int    $post_id  Post ID being read or written.
+ */
+function sp_test_maybe_throw( string $function, int $post_id ): void {
+	if ( ! isset( $GLOBALS['sp_meta_throws'][ $function ][ $post_id ] ) ) {
+		return;
+	}
+
+	$class_name = $GLOBALS['sp_meta_throws'][ $function ][ $post_id ];
+	unset( $GLOBALS['sp_meta_throws'][ $function ][ $post_id ] );
+
+	throw new $class_name( "injected {$class_name} from {$function}() on post {$post_id}" );
+}
+
 function get_post_meta( $post_id, $key = '', $single = false ) {
+	sp_test_maybe_throw( 'get_post_meta', (int) $post_id );
+
 	$grouped = array();
 	foreach ( $GLOBALS['sp_meta_rows'] as $row ) {
 		if ( (int) $row['post_id'] !== (int) $post_id ) {
@@ -168,10 +207,14 @@ function get_post_meta( $post_id, $key = '', $single = false ) {
 }
 
 function add_post_meta( $post_id, $key, $value, $unique = false ) {
+	sp_test_maybe_throw( 'add_post_meta', (int) $post_id );
+
 	return sp_test_add_meta( (int) $post_id, (string) $key, $value );
 }
 
 function update_post_meta( $post_id, $key, $value ) {
+	sp_test_maybe_throw( 'update_post_meta', (int) $post_id );
+
 	foreach ( $GLOBALS['sp_meta_rows'] as $meta_id => $row ) {
 		if ( (int) $row['post_id'] === (int) $post_id && $row['meta_key'] === $key ) {
 			unset( $GLOBALS['sp_meta_rows'][ $meta_id ] );
@@ -195,12 +238,51 @@ function update_postmeta_cache( $ids ) {
 
 function clean_post_cache( $id ) {}
 
+/*
+ * Transients are real state here, not no-ops: SP_Merge_Lock (taken by both
+ * SP_Merge_Processor::execute_merge() and SP_Merge_Backup::revert()) is a
+ * transient on this path, so a test has to be able to pre-set the lock and see
+ * the refusal, and a released lock has to actually disappear.
+ */
+function get_transient( $key ) {
+	return $GLOBALS['sp_transients'][ $key ] ?? false;
+}
+
+function set_transient( $key, $value, $expiration = 0 ) {
+	$GLOBALS['sp_transients'][ $key ] = $value;
+	return true;
+}
+
 function delete_transient( $key ) {
+	unset( $GLOBALS['sp_transients'][ $key ] );
 	return true;
 }
 
 function wp_cache_delete( $key, $group = '' ) {
 	return true;
+}
+
+function wp_cache_add( $key, $data, $group = '', $expire = 0 ) {
+	return true;
+}
+
+function wp_using_ext_object_cache() {
+	return false;
+}
+
+/**
+ * Term names for a player, from a table tests seed directly.
+ *
+ * Used by SP_Merge_Validation::certainty_signals() to read sp_position, the
+ * signal behind the duplicate scan's different-positions penalty.
+ *
+ * @param int    $post_id  Player ID.
+ * @param string $taxonomy Taxonomy slug.
+ * @param array  $args     Query args (only 'fields' => 'names' is used).
+ * @return array
+ */
+function wp_get_post_terms( $post_id, $taxonomy = '', $args = array() ) {
+	return $GLOBALS['sp_player_terms'][ (int) $post_id ][ $taxonomy ] ?? array();
 }
 
 function current_time( $type ) {
@@ -603,6 +685,9 @@ function sp_test_reset(): void {
 	$GLOBALS['sp_insert_post_id'] = null;
 	$GLOBALS['sp_deleted_posts']  = array();
 	$GLOBALS['sp_terms_set']      = array();
+	$GLOBALS['sp_transients']     = array();
+	$GLOBALS['sp_meta_throws']    = array();
+	$GLOBALS['sp_player_terms']   = array();
 }
 
 /**
@@ -648,4 +733,7 @@ $sp_class_file = getenv( 'SP_MERGE_TEST_CLASS' );
 if ( ! $sp_class_file ) {
 	$sp_class_file = dirname( __DIR__ ) . '/classes/class-sp-merge-backup.php';
 }
+// SP_Merge_Backup::revert() takes the shared merge lock, so the lock class is a
+// hard dependency of the class under test here.
+require_once dirname( __DIR__ ) . '/classes/class-sp-merge-lock.php';
 require_once $sp_class_file;

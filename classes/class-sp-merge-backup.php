@@ -191,70 +191,88 @@ class SP_Merge_Backup {
 	 *                                not create itself. Null keeps the prior behavior of scoping
 	 *                                to the current actor.
 	 * @return array{success: bool, code?: string, message?: string} On refusal, code is one of
-	 *               not_found, conflict, values_changed (the only forcible one) or error.
+	 *               not_found, locked, conflict, values_changed (the only forcible one) or error.
 	 */
 	public function revert( string $backup_id, bool $force = false, ?int $owner_user_id = null ): array {
 		global $wpdb;
 
 		$this->maybe_upgrade_schema();
 
-		$row         = $this->load_backup_row( $backup_id, $owner_user_id );
-		$backup_data = $row ? json_decode( (string) $row->backup_data, true ) : null;
-
-		if ( ! $row || ! is_array( $backup_data ) || empty( $backup_data['primary_id'] ) ) {
+		// The same lock SP_Merge_Processor::execute_merge() takes, held across
+		// both guards and the restore itself. Without it a long unattended
+		// `wp sp-merge batch` and a revert typed into a second shell can interleave,
+		// and a merge whose backup captured half-restored event meta is not a
+		// recovery point at all. Never forcible: --force overrides a human's later
+		// edits, not another process writing the same rows right now.
+		if ( ! SP_Merge_Lock::acquire() ) {
 			return array(
 				'success' => false,
-				'code'    => 'not_found',
-				'message' => __( 'Backup data not found', 'sportspress-player-merge' ),
-			);
-		}
-
-		// Guard 1: a later merge may have rewritten the same posts. Never
-		// forcible — the later merges have to be unwound first.
-		$conflicts = $this->find_conflicting_backups( $row );
-		if ( ! empty( $conflicts ) ) {
-			return array(
-				'success' => false,
-				'code'    => 'conflict',
-				'message' => $this->format_conflict_message( $conflicts ),
-			);
-		}
-
-		// Guard 2: somebody may have edited those posts since the merge ran.
-		// This is the one refusal $force overrides, and the only one the UI
-		// offers an override for.
-		$changed = $this->find_values_changed_since_merge( $row, $backup_data );
-		if ( ! empty( $changed ) && ! $force ) {
-			return array(
-				'success' => false,
-				'code'    => 'values_changed',
-				'message' => $this->format_changed_message( $changed ),
+				'code'    => 'locked',
+				'message' => __( 'A merge or revert is already in progress. Please wait and try again.', 'sportspress-player-merge' ),
 			);
 		}
 
 		try {
-			$wpdb->query( 'START TRANSACTION' );
+			$row         = $this->load_backup_row( $backup_id, $owner_user_id );
+			$backup_data = $row ? json_decode( (string) $row->backup_data, true ) : null;
 
-			$this->execute_revert( $backup_data );
-
-			$wpdb->query( 'COMMIT' );
-
-			$this->cleanup_after_revert( $backup_id, $owner_user_id );
-
-			return array( 'success' => true );
-
-		} catch ( Throwable $e ) {
-			$wpdb->query( 'ROLLBACK' );
-
-			if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-				error_log( 'SP Merge revert error: ' . $e->getMessage() );
+			if ( ! $row || ! is_array( $backup_data ) || empty( $backup_data['primary_id'] ) ) {
+				return array(
+					'success' => false,
+					'code'    => 'not_found',
+					'message' => __( 'Backup data not found', 'sportspress-player-merge' ),
+				);
 			}
 
-			return array(
-				'success' => false,
-				'code'    => 'error',
-				'message' => __( 'Revert failed. Please check the error log for details.', 'sportspress-player-merge' ),
-			);
+			// Guard 1: a later merge may have rewritten the same posts. Never
+			// forcible — the later merges have to be unwound first.
+			$conflicts = $this->find_conflicting_backups( $row );
+			if ( ! empty( $conflicts ) ) {
+				return array(
+					'success' => false,
+					'code'    => 'conflict',
+					'message' => $this->format_conflict_message( $conflicts ),
+				);
+			}
+
+			// Guard 2: somebody may have edited those posts since the merge ran.
+			// This is the one refusal $force overrides, and the only one the UI
+			// offers an override for.
+			$changed = $this->find_values_changed_since_merge( $row, $backup_data );
+			if ( ! empty( $changed ) && ! $force ) {
+				return array(
+					'success' => false,
+					'code'    => 'values_changed',
+					'message' => $this->format_changed_message( $changed ),
+				);
+			}
+
+			try {
+				$wpdb->query( 'START TRANSACTION' );
+
+				$this->execute_revert( $backup_data );
+
+				$wpdb->query( 'COMMIT' );
+
+				$this->cleanup_after_revert( $backup_id, $owner_user_id );
+
+				return array( 'success' => true );
+
+			} catch ( Throwable $e ) {
+				$wpdb->query( 'ROLLBACK' );
+
+				if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+					error_log( 'SP Merge revert error: ' . $e->getMessage() );
+				}
+
+				return array(
+					'success' => false,
+					'code'    => 'error',
+					'message' => __( 'Revert failed. Please check the error log for details.', 'sportspress-player-merge' ),
+				);
+			}
+		} finally {
+			SP_Merge_Lock::release();
 		}
 	}
 

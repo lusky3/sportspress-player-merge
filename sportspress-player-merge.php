@@ -124,6 +124,7 @@ class SportsPress_Player_Merge_Init {
 			'class-sp-merge-name-matcher.php',
 			'class-sp-merge-controller.php',
 			'class-sp-merge-admin.php',
+			'class-sp-merge-lock.php',
 			'class-sp-merge-validation.php',
 			'class-sp-merge-ajax.php',
 			'class-sp-merge-processor.php',
