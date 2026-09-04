@@ -16,4 +16,16 @@
     <rule ref="Generic.Arrays.DisallowShortArraySyntax.Found">
         <severity>0</severity>
     </rule>
+
+    <!-- Custom capabilities this plugin registers/checks, so current_user_can()
+         calls against them don't flag as an unknown capability. -->
+    <rule ref="WordPress.WP.Capabilities">
+        <properties>
+            <property name="custom_capabilities" type="array">
+                <element value="edit_sp_players"/>
+                <element value="manage_sportspress"/>
+                <element value="delete_sp_players"/>
+            </property>
+        </properties>
+    </rule>
 </ruleset>

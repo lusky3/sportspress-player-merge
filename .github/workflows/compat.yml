@@ -58,3 +58,14 @@ jobs:
         run: |
           wp eval 'echo "WordPress loaded successfully";' --path=/tmp/wordpress
           wp plugin list --path=/tmp/wordpress --status=active
+
+      - name: Validate wp sp-merge command registration
+        run: |
+          # Catches a malformed ## OPTIONS synopsis or a flag colliding with a
+          # WP-CLI global (the exact class of bug this session already caught
+          # and fixed once) at synopsis-parse time, with no data required.
+          set -e
+          wp help sp-merge --path=/tmp/wordpress > /dev/null
+          for subcommand in scan preview merge revert batch "backups list" "backups delete"; do
+            wp help sp-merge $subcommand --path=/tmp/wordpress > /dev/null
+          done

@@ -71,6 +71,8 @@ jobs:
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.kiro' \
+            --exclude='.superpowers' \
+            --exclude='docs' \
             --exclude='node_modules' \
             --exclude='tests' \
             --exclude='vendor/bin' \
