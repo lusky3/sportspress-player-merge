@@ -386,9 +386,45 @@ class SP_Merge_CLI {
 			\WP_CLI::error( 'Usage: wp sp-merge merge <primary-id> <duplicate-id>...' );
 		}
 
-		$result = SP_Merge_Validation::validate_merge_selection( $primary_raw, $duplicate_raw );
+		// absint() here mirrors exactly what SP_Merge_Validation::validate_merge_selection()
+		// would do to these values anyway (it is idempotent), so pre-casting to satisfy
+		// run_one_merge()'s int/int[] signature changes nothing about how an invalid
+		// (e.g. non-numeric) selection is reported.
+		$outcome = $this->run_one_merge( absint( $primary_raw ), array_map( 'absint', $duplicate_raw ), $assoc_args );
+
+		if ( ! $outcome['success'] ) {
+			\WP_CLI::error( $outcome['message'] );
+		}
+	}
+
+	/**
+	 * Run one merge: validate, preview, survivor-warning gate, confirm, execute.
+	 *
+	 * Shared by `merge` (a single operator-driven merge) and `batch` (many merges
+	 * read from a file). Never calls \WP_CLI::error() itself — doing so would halt
+	 * the whole PHP process, which `batch` cannot allow under --continue-on-error
+	 * — so every refusal (invalid selection, unoverridden survivor warning,
+	 * processor failure) comes back as success:false with a message for the
+	 * caller to act on however it needs to (merge() turns it into a fatal error;
+	 * batch() logs it and decides whether to keep going).
+	 *
+	 * `--dry-run` in $assoc_args stops right after the same preview/warning gate
+	 * a real run would refuse at, and never reaches confirm()/execute_merge() —
+	 * merge() never sets this key, so its own behavior is completely unaffected.
+	 *
+	 * @param int   $primary_id    ID of the player that will survive the merge.
+	 * @param int[] $duplicate_ids ID(s) of the player(s) to merge in and delete.
+	 * @param array $assoc_args    Associative arguments: skip-preview, force, yes, dry-run.
+	 * @return array{success: bool, backup_id: ?string, message: ?string}
+	 */
+	private function run_one_merge( int $primary_id, array $duplicate_ids, array $assoc_args ): array {
+		$result = SP_Merge_Validation::validate_merge_selection( $primary_id, $duplicate_ids );
 		if ( ! $result['valid'] ) {
-			\WP_CLI::error( $result['error'] );
+			return array(
+				'success'   => false,
+				'backup_id' => null,
+				'message'   => $result['error'],
+			);
 		}
 
 		if ( ! isset( $assoc_args['skip-preview'] ) ) {
@@ -408,10 +444,26 @@ class SP_Merge_CLI {
 			}
 
 			if ( ! isset( $assoc_args['force'] ) ) {
-				\WP_CLI::error( 'Merge refused: survivor warning(s) above. Re-run with --force to override.' );
+				return array(
+					'success'   => false,
+					'backup_id' => null,
+					'message'   => 'Merge refused: survivor warning(s) above. Re-run with --force to override.',
+				);
 			}
 
 			$warning_override = true;
+		}
+
+		if ( isset( $assoc_args['dry-run'] ) ) {
+			return array(
+				'success'   => true,
+				'backup_id' => null,
+				'message'   => sprintf(
+					'DRY RUN: would merge %1$d player(s) into #%2$d.',
+					count( $result['duplicate_ids'] ),
+					$result['primary_id']
+				),
+			);
 		}
 
 		$question = sprintf(
@@ -429,7 +481,11 @@ class SP_Merge_CLI {
 		$merge_result = ( new SP_Merge_Processor() )->execute_merge( $result['primary_id'], $result['duplicate_ids'] );
 
 		if ( ! $merge_result['success'] ) {
-			\WP_CLI::error( $merge_result['message'] );
+			return array(
+				'success'   => false,
+				'backup_id' => null,
+				'message'   => $merge_result['message'],
+			);
 		}
 
 		\WP_CLI::success( sprintf( 'Merge completed. Backup ID: %s', $merge_result['backup_id'] ) );
@@ -459,6 +515,250 @@ class SP_Merge_CLI {
 				);
 			}
 		}
+
+		return array(
+			'success'   => true,
+			'backup_id' => $merge_result['backup_id'],
+			'message'   => null,
+		);
+	}
+
+	/**
+	 * Run many merges from a CSV or JSON file, one `run_one_merge()` call per row.
+	 *
+	 * `--log` is mandatory rather than optional: the admin screen's backup list
+	 * only shows the 10 most recent backups per page, so a batch of any real size
+	 * needs its own externally recorded record of every backup ID it produced —
+	 * without one, there is no way to find, and so no way to revert, most of a
+	 * large batch's merges.
+	 *
+	 * Rows are processed strictly in file order with a plain sequential loop —
+	 * the `sp_merge_lock` transient inside SP_Merge_Processor::execute_merge()
+	 * already serializes merges, so this deliberately adds no locking of its own.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <file>
+	 * : Path to the CSV or JSON input file.
+	 *
+	 * [--format=<csv|json>]
+	 * : Input format. Defaults to sniffing the file extension (.csv or .json);
+	 * required when the extension is anything else.
+	 *
+	 * [--stop-on-error]
+	 * : Halt on the first row that fails (after logging it). This is the default.
+	 *
+	 * [--continue-on-error]
+	 * : Keep processing every row regardless of earlier failures.
+	 *
+	 * [--dry-run]
+	 * : Run the preview and survivor-warning gate for every row, but never
+	 * execute a merge. The log still gets one line per row.
+	 *
+	 * [--yes]
+	 * : Skip the confirmation prompt for every row.
+	 *
+	 * --log=<path>
+	 * : Required. Path to append one JSON-Lines record to per processed row.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp sp-merge batch players.csv --log=/tmp/batch.log
+	 *     wp sp-merge batch players.json --continue-on-error --log=/tmp/batch.log
+	 *     wp sp-merge batch players.csv --dry-run --log=/tmp/batch.log
+	 *
+	 * @param array $args       Positional arguments: the input file path.
+	 * @param array $assoc_args Associative arguments: format, stop-on-error,
+	 *                          continue-on-error, dry-run, yes, log.
+	 */
+	public function batch( $args, $assoc_args ): void {
+		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
+			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
+		$log_path = $assoc_args['log'] ?? null;
+		if ( null === $log_path || '' === $log_path ) {
+			\WP_CLI::error( '--log is required.' );
+		}
+
+		$file = $args[0] ?? null;
+		if ( null === $file ) {
+			\WP_CLI::error( 'Usage: wp sp-merge batch <file> --log=<path>' );
+		}
+
+		$format = $assoc_args['format'] ?? $this->sniff_batch_format( $file );
+		if ( null === $format ) {
+			\WP_CLI::error( 'Cannot determine input format: pass --format=<csv|json>, or use a .csv/.json file extension.' );
+		}
+
+		$contents = file_get_contents( $file );
+		if ( false === $contents ) {
+			\WP_CLI::error( sprintf( 'Could not read file: %s', $file ) );
+		}
+
+		$rows = 'csv' === $format ? $this->parse_batch_csv( $contents ) : $this->parse_batch_json( $contents );
+
+		$log_handle = fopen( $log_path, 'a' );
+		if ( false === $log_handle ) {
+			\WP_CLI::error( sprintf( 'Could not open log file for writing: %s', $log_path ) );
+		}
+
+		$continue_on_error = isset( $assoc_args['continue-on-error'] );
+		$total             = count( $rows );
+		$processed         = 0;
+		$succeeded         = 0;
+		$failed            = 0;
+
+		foreach ( $rows as $row ) {
+			$outcome = $this->run_one_merge( $row['primary_id'], $row['duplicate_ids'], $assoc_args );
+
+			// Written and flushed immediately, one row at a time: a crash mid-batch
+			// must not lose the backup IDs of rows that already finished.
+			fwrite(
+				$log_handle,
+				wp_json_encode(
+					array(
+						'primary_id'    => $row['primary_id'],
+						'duplicate_ids' => $row['duplicate_ids'],
+						'success'       => $outcome['success'],
+						'backup_id'     => $outcome['backup_id'],
+						'message'       => $outcome['message'],
+					)
+				) . "\n"
+			);
+			fflush( $log_handle );
+
+			++$processed;
+
+			if ( $outcome['success'] ) {
+				++$succeeded;
+				continue;
+			}
+
+			++$failed;
+			\WP_CLI::warning(
+				sprintf( 'Row %1$d (primary #%2$d): %3$s', $processed, $row['primary_id'], $outcome['message'] )
+			);
+
+			if ( ! $continue_on_error ) {
+				break;
+			}
+		}
+
+		fclose( $log_handle );
+
+		// Logged before any fatal error() below: the summary must be visible
+		// (and the batch's log file already closed) regardless of which branch
+		// this ends in.
+		\WP_CLI::log(
+			sprintf(
+				'Processed %1$d of %2$d row(s): %3$d succeeded, %4$d failed, %5$d remaining.',
+				$processed,
+				$total,
+				$succeeded,
+				$failed,
+				$total - $processed
+			)
+		);
+
+		if ( ! $continue_on_error && $failed > 0 ) {
+			\WP_CLI::error(
+				sprintf( 'Batch halted after row %1$d failed. %2$d row(s) remaining unprocessed.', $processed, $total - $processed )
+			);
+		}
+
+		if ( $failed > 0 ) {
+			\WP_CLI::warning( sprintf( '%d row(s) failed. See %s for details.', $failed, $log_path ) );
+			return;
+		}
+
+		\WP_CLI::success( sprintf( 'Batch completed: %d row(s) succeeded.', $succeeded ) );
+	}
+
+	/**
+	 * Sniff a batch input format from its file extension.
+	 *
+	 * @param string $file Input file path.
+	 * @return string|null 'csv', 'json', or null when the extension is unrecognized.
+	 */
+	private function sniff_batch_format( string $file ): ?string {
+		$ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
+
+		if ( 'csv' === $ext ) {
+			return 'csv';
+		}
+
+		if ( 'json' === $ext ) {
+			return 'json';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse batch CSV input into the uniform row shape run_one_merge() expects.
+	 *
+	 * Row shape: `primary_id,duplicate_ids`, duplicate_ids `;`-joined
+	 * (e.g. `101,205;309`). No header row. absint() normalizes every ID exactly
+	 * as SP_Merge_Validation::validate_merge_selection() would anyway, so a
+	 * malformed row (blank primary, non-numeric ID) surfaces as that row's own
+	 * "Invalid player selection" failure rather than a parse-time fatal.
+	 *
+	 * @param string $contents Raw file contents.
+	 * @return array{primary_id: int, duplicate_ids: int[]}[]
+	 */
+	private function parse_batch_csv( string $contents ): array {
+		$rows = array();
+
+		foreach ( preg_split( '/\r\n|\r|\n/', trim( $contents ) ) as $line ) {
+			$line = trim( $line );
+			if ( '' === $line ) {
+				continue;
+			}
+
+			$fields = str_getcsv( $line );
+
+			$rows[] = array(
+				'primary_id'    => absint( $fields[0] ?? 0 ),
+				'duplicate_ids' => array_values(
+					array_filter( array_map( 'absint', explode( ';', (string) ( $fields[1] ?? '' ) ) ) )
+				),
+			);
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Parse batch JSON input into the uniform row shape run_one_merge() expects.
+	 *
+	 * Shape: an array of `{"primary_id": 101, "duplicate_ids": [205, 309]}`
+	 * objects. As with the CSV parser, IDs are absint()-normalized here rather
+	 * than validated — an invalid row still reaches run_one_merge() and fails
+	 * there, exactly like a bad CSV row.
+	 *
+	 * @param string $contents Raw file contents.
+	 * @return array{primary_id: int, duplicate_ids: int[]}[]
+	 */
+	private function parse_batch_json( string $contents ): array {
+		$decoded = json_decode( $contents, true );
+
+		if ( ! is_array( $decoded ) ) {
+			\WP_CLI::error( 'Invalid JSON input: expected an array of {"primary_id":.., "duplicate_ids":[..]} objects.' );
+		}
+
+		$rows = array();
+
+		foreach ( $decoded as $entry ) {
+			$rows[] = array(
+				'primary_id'    => absint( $entry['primary_id'] ?? 0 ),
+				'duplicate_ids' => array_values(
+					array_filter( array_map( 'absint', (array) ( $entry['duplicate_ids'] ?? array() ) ) )
+				),
+			);
+		}
+
+		return $rows;
 	}
 
 	/**
