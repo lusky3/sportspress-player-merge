@@ -9,7 +9,7 @@ Tasks:
 2. Backup cross-user support — complete
 3. SP_Merge_CLI skeleton + scan/preview + preview generate_data() — complete
 4. merge/revert/backups list/backups delete commands — complete
-5. wp sp-merge batch — pending
+5. wp sp-merge batch — complete
 6. PHPStan wp-cli stubs support — pending
 
 Task 1: complete (commits adb5c5b..1dbbdb2, review clean)
@@ -41,3 +41,14 @@ Task 4: complete (commits de64f82..4014057, review: Approved).
   binary (none available in this sandbox) — recommend `wp help sp-merge
   backups list` as a live sanity check before first production use. Carry
   this into the final report to the user.
+Task 5: complete (commits db81175..bce6945, review: Approved).
+  run_one_merge() extraction verified structurally regression-free against
+  merge()'s pre-diff body; --dry-run's non-execution guarantee verified via
+  substituted assertions (wpdb->backups / sp_deleted_posts stay empty),
+  proven equivalent to the brief's originally-suggested (harness-incompatible)
+  assertion. Minor coverage gaps only (empty batch file, malformed row not
+  directly tested) — non-blocking, note for final review.
+  classes/class-sp-merge-cli.php is now ~1000 lines total across scan/preview/
+  merge/revert/backups/batch — flagged by two implementers now, never
+  restructured without instruction. Worth the final whole-branch reviewer's
+  judgment on whether a follow-up split is warranted (not this branch).
