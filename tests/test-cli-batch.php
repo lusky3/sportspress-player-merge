@@ -699,4 +699,41 @@ sp_assert_contains( 'could not be JSON-encoded', (string) ( $log_rows[0]['messag
 
 unlink( $log_path );
 
+/* -------------------------------------------------------------------------
+ * 15. wp_cache_flush_runtime() is called every 50 rows, bounding the runtime
+ *     cache a long batch would otherwise grow without limit. 101 rows should
+ *     trigger it at row 50 and row 100 — twice — never on every row, and
+ *     never at all for a batch under 50 rows (already implicitly covered by
+ *     every earlier scenario above, none of which reach 50 rows).
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+
+$rows_csv = '';
+for ( $i = 0; $i < 101; $i++ ) {
+	$primary_id   = 10000 + ( $i * 2 );
+	$duplicate_id = $primary_id + 1;
+	sp_test_batch_set_player( $primary_id, 'Primary ' . $i );
+	sp_test_batch_set_player( $duplicate_id, 'Duplicate ' . $i );
+	$rows_csv .= $primary_id . ',' . $duplicate_id . "\n";
+}
+
+$csv_path = sp_test_batch_write_file( $rows_csv, 'csv' );
+$log_path = sp_test_batch_log_path();
+
+( new SP_Merge_CLI() )->batch(
+	array( $csv_path ),
+	array(
+		'skip-preview' => true,
+		'yes'          => true,
+		'log'          => $log_path,
+	)
+);
+
+sp_assert_same( 101, count( sp_test_batch_read_log( $log_path ) ), 'all 101 rows were processed' );
+sp_assert_same( 2, $GLOBALS['spm_cache_flush_runtime_calls'], 'wp_cache_flush_runtime() ran exactly twice for 101 rows (at rows 50 and 100)' );
+
+unlink( $csv_path );
+unlink( $log_path );
+
 sp_test_done();

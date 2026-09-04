@@ -81,13 +81,16 @@ namespace {
 
 	if ( ! function_exists( 'wp_cache_flush_runtime' ) ) {
 		/**
-		 * No-op: no runtime cache exists in this harness (the meta/post mocks
-		 * answer straight from $GLOBALS), so there is nothing to flush. Needed
-		 * because batch() calls this every 50 rows in production (WP 6.0+).
+		 * No-op (beyond counting calls): no runtime cache exists in this harness
+		 * (the meta/post mocks answer straight from $GLOBALS), so there is
+		 * nothing to flush. Needed because batch() calls this every 50 rows in
+		 * production (WP 6.0+); the count lets a test confirm it is actually
+		 * reached, not just that it exists.
 		 *
 		 * @return bool
 		 */
 		function wp_cache_flush_runtime() {
+			$GLOBALS['spm_cache_flush_runtime_calls'] = ( $GLOBALS['spm_cache_flush_runtime_calls'] ?? 0 ) + 1;
 			return true;
 		}
 	}
@@ -454,6 +457,7 @@ namespace {
 		$GLOBALS['sp_transients']     = array();
 		$GLOBALS['sp_meta_throws']    = array();
 		$GLOBALS['sp_player_terms']   = array();
+		$GLOBALS['spm_cache_flush_runtime_calls'] = 0;
 		sp_test_seed_roster( 0 );
 	}
 
