@@ -3,7 +3,15 @@
 ## Unreleased
 
 ### New Features
-- Added `wp sp-merge` WP-CLI command family (`scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, `batch`) for headless and scripted merge/revert/backup operations.
+- Added `wp sp-merge` WP-CLI command family (`scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, `batch`) for headless and scripted merge/revert/backup operations. `batch` requires `--yes`: it confirms per row and is not interactive.
+
+### Bug Fixes
+- `wp sp-merge scan --min-certainty` now filters on the same adjusted certainty the admin screen shows (shared email/team boosts, different-positions penalty), not the raw name-matcher score.
+- Merge previews now count only real `sp_event` posts, so the Events row, `wp sp-merge preview` and `wp sp-merge scan` agree, and two players sharing only a squad list are no longer reported as a same-event collision.
+- A revert now takes the same lock a merge takes, refusing while a merge (or another revert) is in progress instead of restoring records underneath it.
+- A merge re-validates its selection after acquiring that lock, so a selection invalidated by a concurrent operation fails instead of reporting success having merged nothing.
+- `wp sp-merge batch` refuses malformed input rows rather than running a smaller, different merge than the file specified, refuses a non-local or unreadable input path, and never writes a blank log line for a row whose result cannot be JSON-encoded.
+- `wp sp-merge batch` now records the retained backup ID of a row whose merge failed — the recovery path for that row.
 
 ## Version 0.2.0 - Enhanced Statistics Handling
 
