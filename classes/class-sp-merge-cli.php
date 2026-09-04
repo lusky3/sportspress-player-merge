@@ -211,15 +211,19 @@ class SP_Merge_CLI {
 			return;
 		}
 
-		$this->render_preview_report( $data );
+		$this->render_preview_data( $data );
 	}
 
 	/**
 	 * Render the structured preview data as a human-readable report.
 	 *
+	 * Shared by `preview` (its default, non-json/yaml output) and `merge` (its
+	 * pre-execution preview step) so the two commands can never describe the
+	 * same selection differently.
+	 *
 	 * @param array $data Return value of SP_Merge_Preview::generate_data().
 	 */
-	private function render_preview_report( array $data ): void {
+	private function render_preview_data( array $data ): void {
 		$duplicate_names = implode(
 			', ',
 			array_map(
@@ -332,5 +336,367 @@ class SP_Merge_CLI {
 				);
 			}
 		}
+	}
+
+	/**
+	 * Execute a merge from the command line.
+	 *
+	 * Runs the same preview and survivor-warning checks the admin screen shows,
+	 * unless explicitly skipped, so an operator scripting this cannot execute a
+	 * selection they never had a chance to see. `--force` only ever overrides the
+	 * survivor warning; it never skips the preview, and it never implies `--yes`
+	 * — a forced merge still stops for confirmation unless `--yes` is also given.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <primary-id>
+	 * : ID of the player that will survive the merge.
+	 *
+	 * <duplicate-id>...
+	 * : ID(s) of the player(s) that will be merged into the primary and deleted.
+	 *
+	 * [--skip-preview]
+	 * : Do not print the preview report before asking for confirmation.
+	 *
+	 * [--force]
+	 * : Proceed despite a survivor warning (the chosen primary holds
+	 * substantially less history than a duplicate). Has no effect when there is
+	 * no warning to override, and does not skip the confirmation prompt.
+	 *
+	 * [--yes]
+	 * : Skip the confirmation prompt.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp sp-merge merge 123 456 789
+	 *     wp sp-merge merge 123 456 --force --yes
+	 *
+	 * @param array $args       Positional arguments: primary ID, then duplicate ID(s).
+	 * @param array $assoc_args Associative arguments: skip-preview, force, yes.
+	 */
+	public function merge( $args, $assoc_args ): void {
+		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
+			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
+		$primary_raw   = $args[0] ?? null;
+		$duplicate_raw = array_slice( $args, 1 );
+
+		if ( null === $primary_raw || empty( $duplicate_raw ) ) {
+			\WP_CLI::error( 'Usage: wp sp-merge merge <primary-id> <duplicate-id>...' );
+		}
+
+		$result = SP_Merge_Validation::validate_merge_selection( $primary_raw, $duplicate_raw );
+		if ( ! $result['valid'] ) {
+			\WP_CLI::error( $result['error'] );
+		}
+
+		if ( ! isset( $assoc_args['skip-preview'] ) ) {
+			$preview_data = ( new SP_Merge_Preview() )->generate_data( $result['primary_id'], $result['duplicate_ids'] );
+			$this->render_preview_data( $preview_data );
+		}
+
+		$warnings         = SP_Merge_Validation::survivor_warnings( $result['primary_id'], $result['duplicate_ids'] );
+		$warning_override = false;
+
+		if ( ! empty( $warnings ) ) {
+			// Printed regardless of --force: the confirmation question below
+			// refers back to these ("see above"), so they must be visible
+			// before the operator is asked to override them.
+			foreach ( $warnings as $warning ) {
+				\WP_CLI::warning( $warning );
+			}
+
+			if ( ! isset( $assoc_args['force'] ) ) {
+				\WP_CLI::error( 'Merge refused: survivor warning(s) above. Re-run with --force to override.' );
+			}
+
+			$warning_override = true;
+		}
+
+		$question = sprintf(
+			'Merge %1$d player(s) into #%2$d? This permanently deletes the duplicate posts.',
+			count( $result['duplicate_ids'] ),
+			$result['primary_id']
+		);
+
+		if ( $warning_override ) {
+			$question = 'Survivor warning overridden — see above. ' . $question;
+		}
+
+		\WP_CLI::confirm( $question, $assoc_args );
+
+		$merge_result = ( new SP_Merge_Processor() )->execute_merge( $result['primary_id'], $result['duplicate_ids'] );
+
+		if ( ! $merge_result['success'] ) {
+			\WP_CLI::error( $merge_result['message'] );
+		}
+
+		\WP_CLI::success( sprintf( 'Merge completed. Backup ID: %s', $merge_result['backup_id'] ) );
+
+		foreach ( (array) ( $merge_result['resolutions'] ?? array() ) as $resolution ) {
+			$address = SP_Merge_Processor::format_resolution_path( $resolution );
+			$kept    = SP_Merge_Processor::format_resolution_value( $resolution['kept'] );
+
+			if ( 'conflict' === $resolution['action'] ) {
+				\WP_CLI::log(
+					sprintf(
+						'  %1$s — keeping "%2$s", discarding "%3$s" (player %4$d)',
+						$address,
+						$kept,
+						SP_Merge_Processor::format_resolution_value( $resolution['discarded'] ),
+						(int) $resolution['duplicate_id']
+					)
+				);
+			} else {
+				\WP_CLI::log(
+					sprintf(
+						'  %1$s — the duplicate\'s value "%2$s" was used (player %3$d)',
+						$address,
+						$kept,
+						(int) $resolution['duplicate_id']
+					)
+				);
+			}
+		}
+	}
+
+	/**
+	 * Revert a merge from the command line.
+	 *
+	 * A plain revert is attempted first, unforced, regardless of whether
+	 * `--force` was passed — that first call either succeeds outright (nothing
+	 * to override, nothing to confirm) or fails cleanly with no side effects
+	 * (guards run before anything is written). Only when that call refuses with
+	 * `values_changed`, and `--force` was given, is the operator shown what
+	 * would be discarded and asked to confirm a second, forced call. A
+	 * `conflict` refusal (a later merge overlaps this one) is never forceable,
+	 * by design of SP_Merge_Backup::revert() itself — reverting it requires
+	 * unwinding the later merge first.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <backup-id>
+	 * : Backup ID to revert.
+	 *
+	 * [--user=<id|login>]
+	 * : Revert a backup owned by another user. Defaults to the current user;
+	 * targeting anyone else requires the delete_sp_players capability.
+	 *
+	 * [--force]
+	 * : Override a refusal caused by values changing after the merge ran. Has
+	 * no effect on a conflict refusal, which is never forceable.
+	 *
+	 * [--yes]
+	 * : Skip the confirmation prompt.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp sp-merge revert merge_1700000000_abcd1234
+	 *     wp sp-merge revert merge_1700000000_abcd1234 --force --yes
+	 *
+	 * @param array $args       Positional arguments: the backup ID.
+	 * @param array $assoc_args Associative arguments: user, force, yes.
+	 */
+	public function revert( $args, $assoc_args ): void {
+		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
+			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
+		$backup_id = $args[0] ?? null;
+		if ( null === $backup_id ) {
+			\WP_CLI::error( 'Usage: wp sp-merge revert <backup-id>' );
+		}
+
+		$owner_id = $this->resolve_target_user( $assoc_args['user'] ?? null );
+		$backup   = new SP_Merge_Backup();
+
+		// Always the first call, whether or not --force was passed: it either
+		// completes the revert (nothing needed overriding) or refuses without
+		// having written anything.
+		$attempt = $backup->revert( $backup_id, false, $owner_id );
+
+		if ( $attempt['success'] ) {
+			\WP_CLI::success( 'Merge reverted successfully' );
+			return;
+		}
+
+		if ( ! isset( $assoc_args['force'] ) || 'values_changed' !== ( $attempt['code'] ?? '' ) ) {
+			// Not forced, or a refusal --force could never have overridden
+			// anyway (not_found, conflict, error) — nothing left to try.
+			\WP_CLI::error( $attempt['message'] );
+		}
+
+		\WP_CLI::warning( $attempt['message'] );
+		\WP_CLI::confirm( 'Override and revert anyway? Everything listed above was written after the merge and will be permanently discarded.', $assoc_args );
+
+		$forced = $backup->revert( $backup_id, true, $owner_id );
+
+		if ( ! $forced['success'] ) {
+			\WP_CLI::error( $forced['message'] );
+		}
+
+		\WP_CLI::success( 'Merge reverted using the override. Values changed since the merge were discarded.' );
+	}
+
+	/**
+	 * List recent merge backups.
+	 *
+	 * Everyone with edit_sp_players can list their own backups; seeing every
+	 * user's backups is a step up in exposure (names and IDs of records other
+	 * League Managers merged) and needs delete_sp_players, same as deleting one.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--user=<id|login>]
+	 * : List backups owned by another user instead of the current user.
+	 * Ignored when --all-users is passed. Targeting anyone else requires the
+	 * delete_sp_players capability.
+	 *
+	 * [--all-users]
+	 * : List backups for every user. Requires the delete_sp_players capability.
+	 *
+	 * [--status=<status>]
+	 * : Only list backups with this status (e.g. active, pending, failed, reverted).
+	 *
+	 * [--limit=<n>]
+	 * : Maximum number of backups to return.
+	 *
+	 * [--format=<format>]
+	 * : Render output in a particular format.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - csv
+	 *   - json
+	 *   - yaml
+	 * ---
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp sp-merge backups list --all-users --status=active
+	 *
+	 * @param array $args       Positional arguments (unused).
+	 * @param array $assoc_args Associative arguments: user, all-users, status, limit, format.
+	 */
+	public function backups_list( $args, $assoc_args ): void {
+		$all_users    = isset( $assoc_args['all-users'] );
+		$required_cap = $all_users ? 'delete_sp_players' : 'edit_sp_players';
+
+		if ( ! current_user_can( $required_cap ) ) {
+			\WP_CLI::error(
+				$all_users
+					? 'Only an Administrator (delete_sp_players) can list every user\'s backups.'
+					: 'Insufficient permissions.'
+			);
+		}
+
+		$user_id = $all_users ? null : $this->resolve_target_user( $assoc_args['user'] ?? null );
+		$status  = $assoc_args['status'] ?? null;
+		$format  = $assoc_args['format'] ?? 'table';
+		$admin   = new SP_Merge_Admin();
+
+		$backups = isset( $assoc_args['limit'] )
+			? $admin->get_recent_backups( (int) $assoc_args['limit'], $user_id, $all_users )
+			: $admin->get_recent_backups( user_id: $user_id, all_users: $all_users );
+
+		if ( false === $backups ) {
+			\WP_CLI::error( 'Failed to retrieve backup data.' );
+		}
+
+		if ( null !== $status ) {
+			$backups = array_values(
+				array_filter(
+					$backups,
+					static function ( $backup ) use ( $status ) {
+						return ( $backup['status'] ?? '' ) === $status;
+					}
+				)
+			);
+		}
+
+		\WP_CLI\Utils\format_items( $format, $backups, array( 'id', 'date', 'status', 'primary_name', 'duplicate_names' ) );
+	}
+
+	/**
+	 * Delete one or more merge backups.
+	 *
+	 * A deleted backup is the only recovery path for its merge, so this always
+	 * requires delete_sp_players — there is no lower "delete your own backup"
+	 * tier the way merge/revert have a League Manager tier.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <backup-id>...
+	 * : Backup ID(s) to delete.
+	 *
+	 * [--user=<id|login>]
+	 * : Delete backup(s) owned by another user instead of the current user.
+	 *
+	 * [--yes]
+	 * : Skip the confirmation prompt.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp sp-merge backups delete merge_1700000000_abcd1234 --yes
+	 *
+	 * @param array $args       Positional arguments: backup ID(s).
+	 * @param array $assoc_args Associative arguments: user, yes.
+	 */
+	public function backups_delete( $args, $assoc_args ): void {
+		if ( ! current_user_can( 'delete_sp_players' ) ) {
+			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
+		if ( empty( $args ) ) {
+			\WP_CLI::error( 'Usage: wp sp-merge backups delete <backup-id>...' );
+		}
+
+		// The helper's own capability check always passes here — delete_sp_players
+		// was already required above — but it still resolves --user consistently
+		// with every other subcommand, so it is reused rather than duplicated.
+		$owner_id = $this->resolve_target_user( $assoc_args['user'] ?? null );
+
+		\WP_CLI::warning( 'Deleting a backup permanently removes the only recovery path for that merge.' );
+		\WP_CLI::confirm(
+			sprintf( 'Delete %d backup(s)? This cannot be undone.', count( $args ) ),
+			$assoc_args
+		);
+
+		$deleted = ( new SP_Merge_Backup() )->delete_backups( $args, $owner_id );
+
+		\WP_CLI::success( sprintf( '%d backup(s) deleted.', $deleted ) );
+	}
+
+	/**
+	 * Resolve which user a subcommand should act on behalf of.
+	 *
+	 * Defaults to the current user. An explicit target is only permitted for a
+	 * caller holding delete_sp_players — the same tier the AJAX layer requires
+	 * for touching another user's backups at all — so a League Manager cannot
+	 * use `--user` to reach into an Administrator's (or another League
+	 * Manager's) backups.
+	 *
+	 * @param string|null $user_arg Raw --user value: numeric ID or login, or null/empty for "self".
+	 * @return int Resolved user ID.
+	 */
+	private function resolve_target_user( ?string $user_arg ): int {
+		if ( null === $user_arg || '' === $user_arg ) {
+			return get_current_user_id();
+		}
+
+		$user = is_numeric( $user_arg ) ? get_user_by( 'id', (int) $user_arg ) : get_user_by( 'login', $user_arg );
+		if ( ! $user ) {
+			\WP_CLI::error( sprintf( 'No user found matching "%s".', $user_arg ) );
+		}
+
+		$target_id = (int) $user->ID;
+
+		if ( $target_id !== get_current_user_id() && ! current_user_can( 'delete_sp_players' ) ) {
+			\WP_CLI::error( 'Only an Administrator (delete_sp_players) can act on another user\'s backups.' );
+		}
+
+		return $target_id;
 	}
 }

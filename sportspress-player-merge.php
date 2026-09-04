@@ -144,7 +144,20 @@ class SportsPress_Player_Merge_Init {
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli.php';
+
+			/*
+			 * A single class registration maps each public method to one
+			 * hyphenated leaf subcommand (e.g. `backups_list` -> `backups-list`),
+			 * not a two-word nested one — WP-CLI's CommandFactory only splits a
+			 * class into a command tree along namespace boundaries it is told
+			 * about explicitly, never by parsing underscores in a method name
+			 * into multiple path segments. `backups list` / `backups delete`
+			 * are therefore registered as their own commands, each bound to one
+			 * method on its own instance.
+			 */
 			WP_CLI::add_command( 'sp-merge', 'SP_Merge_CLI' );
+			WP_CLI::add_command( 'sp-merge backups list', array( new SP_Merge_CLI(), 'backups_list' ) );
+			WP_CLI::add_command( 'sp-merge backups delete', array( new SP_Merge_CLI(), 'backups_delete' ) );
 		}
 	}
 }

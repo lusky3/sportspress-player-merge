@@ -4,11 +4,25 @@
  *
  * Builds on lib-ajax-mocks.php (which itself builds on lib-backup-mocks.php),
  * reusing the roster/meta/wpdb mocks scan and preview already need, and adds
- * only what is CLI-specific: a WP_CLI stub, a WP_CLI\Utils\format_items() stub,
+ * what is CLI-specific: a WP_CLI stub, a WP_CLI\Utils\format_items() stub,
  * get_user_by(), and a $wpdb replacement that answers the postmeta-scan queries
  * SP_Merge_Preview and SP_Merge_Validation::get_event_counts() issue directly
  * (lib-backup-mocks.php's SP_Test_WPDB only understands the backup table's own
  * queries, not those).
+ *
+ * `merge`/`revert`/`backups` drive the real SP_Merge_Backup and SP_Merge_Admin
+ * classes (already loaded by lib-backup-mocks.php/this file) end to end rather
+ * than a stand-in, per the house convention of testing the real merge pipeline
+ * wherever practical. That needs a $wpdb that understands both the backup
+ * table's own queries (SP_Test_WPDB, from lib-backup-mocks.php) and the
+ * postmeta-scan queries above, so SP_Test_CLI_Backup_WPDB below extends
+ * SP_Test_WPDB rather than duplicating it, adding only the scan patterns and
+ * falling through to the parent for everything else — including every
+ * DISTINCT-post-id query the merge/backup classes issue to rewire event and
+ * list references, which this harness deliberately leaves unanswered (an empty
+ * result, same as production hitting no matching rows): these tests are not
+ * exercising that rewiring, only that a merge with nothing to rewire still
+ * completes and produces a real backup.
  *
  * Uses bracketed namespace blocks throughout — PHP does not allow mixing
  * bracketed and unbracketed namespace declarations in one file, and
@@ -26,6 +40,80 @@ namespace {
 	if ( ! function_exists( 'absint' ) ) {
 		function absint( $maybeint ) {
 			return abs( (int) $maybeint );
+		}
+	}
+
+	if ( ! function_exists( 'has_post_thumbnail' ) ) {
+		/**
+		 * Featured-image presence, backed by the same _thumbnail_id meta row a
+		 * real install stores it in — merge_featured_image() reads exactly this.
+		 *
+		 * @param int $post_id Post ID.
+		 * @return bool
+		 */
+		function has_post_thumbnail( $post_id ) {
+			return '' !== get_post_meta( $post_id, '_thumbnail_id', true );
+		}
+	}
+
+	if ( ! function_exists( 'get_post_thumbnail_id' ) ) {
+		/**
+		 * @param int $post_id Post ID.
+		 * @return int|string|false
+		 */
+		function get_post_thumbnail_id( $post_id ) {
+			$id = get_post_meta( $post_id, '_thumbnail_id', true );
+			return '' === $id ? false : $id;
+		}
+	}
+
+	if ( ! function_exists( 'set_post_thumbnail' ) ) {
+		/**
+		 * @param int $post_id      Post ID.
+		 * @param int $thumbnail_id Attachment ID.
+		 * @return bool
+		 */
+		function set_post_thumbnail( $post_id, $thumbnail_id ) {
+			update_post_meta( $post_id, '_thumbnail_id', $thumbnail_id );
+			return true;
+		}
+	}
+
+	if ( ! function_exists( 'wp_using_ext_object_cache' ) ) {
+		function wp_using_ext_object_cache() {
+			return false;
+		}
+	}
+
+	if ( ! function_exists( 'wp_cache_add' ) ) {
+		function wp_cache_add( $key, $data, $group = '', $expire = 0 ) {
+			return true;
+		}
+	}
+
+	if ( ! function_exists( 'get_transient' ) ) {
+		/**
+		 * The merge lock is never held across two calls within one test, so a
+		 * constant "not locked" is enough — acquire_lock()/release_lock() just
+		 * need to not fatal.
+		 *
+		 * @param string $key Transient key.
+		 * @return false
+		 */
+		function get_transient( $key ) {
+			return false;
+		}
+	}
+
+	if ( ! function_exists( 'set_transient' ) ) {
+		function set_transient( $key, $value, $expiration = 0 ) {
+			return true;
+		}
+	}
+
+	if ( ! function_exists( 'do_action' ) ) {
+		function do_action( $hook, ...$args ) {
+			return null;
 		}
 	}
 
@@ -135,75 +223,76 @@ namespace {
 	}
 
 	/**
-	 * $wpdb stand-in for the postmeta-scan queries SP_Merge_Preview and
-	 * SP_Merge_Validation::get_event_counts() issue directly against
-	 * $GLOBALS['sp_meta_rows'] — the same meta store get_post_meta()/
-	 * sp_test_add_meta() already use. lib-backup-mocks.php's SP_Test_WPDB does
-	 * not answer these query shapes (it only knows the backup table's own
-	 * queries), so this replaces $GLOBALS['wpdb'] rather than extending it.
+	 * $wpdb stand-in combining lib-backup-mocks.php's SP_Test_WPDB (the backup
+	 * table, schema upgrade, and everything create_merge_backup()/revert()/
+	 * mark_active() need) with the postmeta-scan query shapes SP_Merge_Preview
+	 * and SP_Merge_Validation::get_event_counts() issue directly against
+	 * $GLOBALS['sp_meta_rows'] — the one raw-query shape the backup mock does
+	 * not answer. Every pattern this subclass does not recognize falls through
+	 * to the parent, so backup-table queries keep working unchanged.
 	 *
 	 * Every event a test seeds is a row where meta_key = 'sp_player' and
 	 * meta_value = the player ID: exactly how SportsPress stores event rosters,
 	 * and how the real queries this stands in for are written.
 	 */
-	class SP_Test_CLI_WPDB {
+	class SP_Test_CLI_Backup_WPDB extends \SP_Test_WPDB {
 
-		public $prefix   = 'wp_';
-		public $postmeta = 'wp_postmeta';
-		public $posts    = 'wp_posts';
-
-		/** @var array[] Prepared statements, keyed by an opaque token. */
-		private $preps = array();
-
-		public function get_charset_collate() {
-			return '';
-		}
-
-		public function esc_like( $text ) {
-			return addcslashes( $text, '_%\\' );
-		}
+		/**
+		 * Prepared statements this subclass has decoded, keyed the same way as
+		 * the parent's own (private, and so unreadable from here) $preps array.
+		 *
+		 * @var array<int, array{sql: string, args: array}>
+		 */
+		private $cli_preps = array();
 
 		public function prepare( $query, ...$args ) {
-			if ( 1 === count( $args ) && is_array( $args[0] ) ) {
-				$args = $args[0];
+			// Let the parent do the real bookkeeping (its own get_*() fallbacks
+			// depend on it); just also decode the same call for our own patterns.
+			$wrapped = parent::prepare( $query, ...$args );
+
+			if ( preg_match( '/^##PREP(\d+)##/', $wrapped, $m ) ) {
+				if ( 1 === count( $args ) && is_array( $args[0] ) ) {
+					$args = $args[0];
+				}
+				$this->cli_preps[ (int) $m[1] ] = array(
+					'sql'  => $query,
+					'args' => array_values( $args ),
+				);
 			}
-			$this->preps[] = array(
-				'sql'  => $query,
-				'args' => array_values( $args ),
-			);
-			return '##PREP' . ( count( $this->preps ) - 1 ) . '##' . $query;
+
+			return $wrapped;
 		}
 
-		private function unpack( $query ) {
-			if ( preg_match( '/^##PREP(\d+)##(.*)$/s', $query, $m ) ) {
-				$prep = $this->preps[ (int) $m[1] ];
+		private function cli_unpack( $query ) {
+			if ( preg_match( '/^##PREP(\d+)##/', $query, $m ) && isset( $this->cli_preps[ (int) $m[1] ] ) ) {
+				$prep = $this->cli_preps[ (int) $m[1] ];
 				return array( $prep['sql'], $prep['args'] );
 			}
 			return array( $query, array() );
 		}
 
 		public function get_var( $query ) {
-			list( $sql, $args ) = $this->unpack( $query );
+			list( $sql, $args ) = $this->cli_unpack( $query );
 
 			if ( false !== strpos( $sql, 'SELECT COUNT(*)' ) && false !== strpos( $sql, "meta_key = 'sp_player'" ) ) {
 				return (string) count( $this->matching_post_ids( (string) $args[0] ) );
 			}
 
-			return null;
+			return parent::get_var( $query );
 		}
 
 		public function get_col( $query ) {
-			list( $sql, $args ) = $this->unpack( $query );
+			list( $sql, $args ) = $this->cli_unpack( $query );
 
 			if ( 0 === strpos( $sql, 'SELECT post_id FROM' ) && false !== strpos( $sql, "meta_key = 'sp_player'" ) ) {
 				return $this->matching_post_ids( (string) $args[0] );
 			}
 
-			return array();
+			return parent::get_col( $query );
 		}
 
 		public function get_results( $query ) {
-			list( $sql, $args ) = $this->unpack( $query );
+			list( $sql, $args ) = $this->cli_unpack( $query );
 
 			// SP_Merge_Validation::get_event_counts(): grouped counts for a batch of player IDs.
 			if ( false !== strpos( $sql, 'GROUP BY pm.meta_value' ) ) {
@@ -227,7 +316,7 @@ namespace {
 				return $out;
 			}
 
-			return array();
+			return parent::get_results( $query );
 		}
 
 		/**
@@ -247,7 +336,7 @@ namespace {
 		}
 	}
 
-	$GLOBALS['wpdb'] = new SP_Test_CLI_WPDB();
+	$GLOBALS['wpdb'] = new SP_Test_CLI_Backup_WPDB();
 
 	/**
 	 * Seed an event: a post where meta_key 'sp_player' points at a player ID.
@@ -266,27 +355,36 @@ namespace {
 	/**
 	 * Reset the CLI test harness's mutable state between scenarios.
 	 *
-	 * Mirrors sp_test_reset() from lib-backup-mocks.php, but re-installs
-	 * SP_Test_CLI_WPDB rather than SP_Test_WPDB so the postmeta-scan queries
-	 * keep working after the reset.
+	 * Mirrors sp_test_reset() from lib-backup-mocks.php (now also resetting the
+	 * globals SP_Merge_Backup itself depends on — merge/revert/backups drive
+	 * that class for real), but re-installs SP_Test_CLI_Backup_WPDB rather than
+	 * SP_Test_WPDB so the postmeta-scan queries keep working after the reset.
 	 */
 	function sp_test_cli_reset(): void {
-		$GLOBALS['wpdb']            = new SP_Test_CLI_WPDB();
-		$GLOBALS['sp_meta_rows']    = array();
-		$GLOBALS['sp_meta_next_id'] = 1000;
-		$GLOBALS['sp_posts']        = array();
-		$GLOBALS['sp_denied_caps']  = array();
-		$GLOBALS['spm_cli_log']     = array();
-		$GLOBALS['spm_cli_users']   = array();
+		$GLOBALS['wpdb']              = new SP_Test_CLI_Backup_WPDB();
+		$GLOBALS['sp_meta_rows']      = array();
+		$GLOBALS['sp_meta_next_id']   = 1000;
+		$GLOBALS['sp_posts']          = array();
+		$GLOBALS['sp_denied_caps']    = array();
+		$GLOBALS['spm_cli_log']       = array();
+		$GLOBALS['spm_cli_users']     = array();
+		$GLOBALS['sp_options']        = array();
+		$GLOBALS['sp_user_meta']      = array();
+		$GLOBALS['sp_current_user']   = 7;
+		$GLOBALS['sp_insert_post_id'] = null;
+		$GLOBALS['sp_deleted_posts']  = array();
+		$GLOBALS['sp_terms_set']      = array();
 		sp_test_seed_roster( 0 );
 	}
 
 	// Loaded in production dependency order: SP_Merge_Preview calls into
 	// SP_Merge_Processor, and SP_Merge_CLI calls into all of these plus
-	// SP_Merge_Ajax/SP_Merge_Validation, already required by lib-ajax-mocks.php.
+	// SP_Merge_Ajax/SP_Merge_Validation/SP_Merge_Backup (already required by
+	// lib-ajax-mocks.php -> lib-backup-mocks.php) and SP_Merge_Admin.
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-name-matcher.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-processor.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-preview.php';
+	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-admin.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli.php';
 }
 
