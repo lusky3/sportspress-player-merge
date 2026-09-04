@@ -166,6 +166,11 @@ try {
 	$threw = $e;
 }
 sp_assert( null !== $threw, 'lacking both manage_sportspress and delete_sp_players refuses the merge' );
+// The seeded players (100/200) don't exist in this scenario, so without this
+// message check a regression that silently dropped the capability check
+// would still pass this test via a "player not found" error instead of a
+// permissions one.
+sp_assert_contains( 'permission', strtolower( $threw ? $threw->getMessage() : '' ), 'the refusal is actually the permissions check, not some other failure' );
 
 sp_test_cli_reset();
 $threw = null;

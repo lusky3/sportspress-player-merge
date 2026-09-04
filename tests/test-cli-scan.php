@@ -143,4 +143,16 @@ sp_assert_same( 'warning', $summary['level'], 'a truncated scan warns instead of
 sp_assert_contains( '40 of 60', $summary['message'], 'the warning states how much of the roster was actually scanned' );
 sp_assert_contains( '20 were skipped', $summary['message'], 'the warning states how many players were skipped' );
 
+/* 6. Lacking edit_sp_players refuses the scan outright, before touching the roster. */
+sp_test_cli_reset();
+$GLOBALS['sp_denied_caps'] = array( 'edit_sp_players' );
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array() );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, 'lacking edit_sp_players refuses the scan' );
+
 sp_test_done();

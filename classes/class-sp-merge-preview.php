@@ -74,6 +74,14 @@ class SP_Merge_Preview {
 	 * }
 	 */
 	public function generate_data( int $primary_id, array $duplicate_ids ): array {
+		// Pre-cache meta and terms for all players to avoid N+1 queries, exactly
+		// as generate() does — a CLI preview (and every row of a batch run) walks
+		// the same per-player getters below, so it pays the same N+1 cost if this
+		// priming is skipped.
+		$all_ids = array_merge( array( $primary_id ), $duplicate_ids );
+		update_postmeta_cache( $all_ids );
+		update_object_term_cache( $all_ids, 'sp_player' );
+
 		$primary    = $this->get_player_details( $primary_id );
 		$duplicates = array_map( array( $this, 'get_player_details' ), $duplicate_ids );
 

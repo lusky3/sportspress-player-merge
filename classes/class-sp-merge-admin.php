@@ -242,6 +242,7 @@ class SP_Merge_Admin {
 		foreach ( $results as $row ) {
 			$backups[] = array(
 				'id'              => $row->backup_id,
+				'user_id'         => (int) $row->user_id,
 				'date'            => mysql2date( 'M j, Y g:i A', $row->created_at ),
 				'status'          => (string) ( $row->status ?? 'active' ),
 				'primary_name'    => json_decode( $row->primary_name, true ) ?? __( 'Unknown', 'sportspress-player-merge' ),

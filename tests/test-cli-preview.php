@@ -147,4 +147,21 @@ sp_assert_same( 100, $decoded['primary']['id'] ?? null, 'the JSON payload carrie
 sp_assert_same( 1, count( $decoded['array_field_conflicts'] ?? array() ), 'the JSON payload carries the conflict resolution' );
 sp_assert_same( 2, count( $decoded['array_field_filled'] ?? array() ), 'the JSON payload carries both filled resolutions (goals and the blank league cell)' );
 
+/* -------------------------------------------------------------------------
+ * 5. Lacking edit_sp_players refuses the preview outright.
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+sp_test_set_player( 100, 'Primary Player' );
+sp_test_set_player( 200, 'Duplicate Player' );
+$GLOBALS['sp_denied_caps'] = array( 'edit_sp_players' );
+
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->preview( array( '100', '200' ), array() );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, 'lacking edit_sp_players refuses the preview' );
+
 sp_test_done();

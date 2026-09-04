@@ -1,5 +1,10 @@
 # SportsPress Player Merge - Changelog
 
+## Unreleased
+
+### New Features
+- Added `wp sp-merge` WP-CLI command family (`scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, `batch`) for headless and scripted merge/revert/backup operations.
+
 ## Version 0.2.0 - Enhanced Statistics Handling
 
 ### Major Improvements

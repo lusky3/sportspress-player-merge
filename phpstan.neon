@@ -11,7 +11,7 @@ parameters:
   bootstrapFiles:
     - phpstan-bootstrap.php
   scanFiles:
-    - %rootDir%/../../php-stubs/wp-cli-stubs/stubs/*.php
+    - %rootDir%/../../php-stubs/wp-cli-stubs/wp-cli-stubs.php
   reportUnmatchedIgnoredErrors: false
   ignoreErrors:
     - '#Function apply_filters invoked with#'

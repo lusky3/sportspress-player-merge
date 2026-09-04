@@ -63,6 +63,24 @@ Scoring adjustments: +5% same team, -20% different positions, +20% matching emai
 
 Editors can browse and preview potential merges. League Managers can execute and revert merges. Only Administrators can permanently delete backup data.
 
+## WP-CLI
+
+The same merge/revert/backup functionality is available headless via `wp sp-merge`, for scripting and bulk operations the admin screen isn't built for:
+
+| Subcommand | Description |
+|------------|-------------|
+| `wp sp-merge scan` | Run the duplicate-name scan and print matched groups, filterable by certainty/scenario. |
+| `wp sp-merge preview` | Show what a merge of an explicit player selection would do, without executing it. |
+| `wp sp-merge merge` | Execute a merge of an explicit player selection. |
+| `wp sp-merge revert` | Revert a previously executed merge from its backup ID. |
+| `wp sp-merge backups list` | List recent merge backups. |
+| `wp sp-merge backups delete` | Permanently delete one or more merge backups. |
+| `wp sp-merge batch` | Run many merges from a CSV or JSON file in one pass, logging one record per row. |
+
+Run `wp help sp-merge <subcommand>` for full flag documentation.
+
+WP-CLI has no logged-in web session, so it relies entirely on its own global `--user=<id|login>` flag to set the acting identity — `current_user_can()` is checked exactly as it is for the AJAX-driven admin page. The mutating subcommands (`merge`, `revert`, `backups delete`, `batch`) require `--user` to point at an account holding `manage_sportspress` (or `delete_sp_players`, for `backups delete`); without it, there is no logged-in user and every one of these refuses with "Insufficient permissions."
+
 ## File Structure
 
 ```text
