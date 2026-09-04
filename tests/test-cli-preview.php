@@ -148,6 +148,107 @@ sp_assert_same( 1, count( $decoded['array_field_conflicts'] ?? array() ), 'the J
 sp_assert_same( 2, count( $decoded['array_field_filled'] ?? array() ), 'the JSON payload carries both filled resolutions (goals and the blank league cell)' );
 
 /* -------------------------------------------------------------------------
+ * 4b. Event counts come from real sp_event posts only, and match what
+ *     `wp sp-merge scan` reports for the same player.
+ *
+ *     sp_list posts carry 'sp_player' meta rows too (that is how SportsPress
+ *     stores squad lists), so counting raw meta rows made preview's Events row
+ *     disagree with scan's events column — and made two players who merely
+ *     share a squad list look like a same-event collision, i.e. a spurious
+ *     WARN out of --porcelain.
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+sp_test_set_player( 100, 'John Smith' );
+sp_test_set_player( 200, 'John Smith' );
+
+// A roster the duplicate scan can actually form a group from.
+$GLOBALS['sp_scan_roster'] = array(
+	(object) array( 'ID' => 100, 'post_title' => 'John Smith', 'post_type' => 'sp_player' ),
+	(object) array( 'ID' => 200, 'post_title' => 'John Smith', 'post_type' => 'sp_player' ),
+);
+$GLOBALS['sp_scan_total']  = 2;
+
+sp_test_seed_event( 9001, 100 );
+sp_test_seed_event( 9002, 100 );
+sp_test_seed_event( 9003, 200 );
+
+// Both players sit on the same squad list — not an event, and not a collision.
+sp_test_seed_list_membership( 7001, 100 );
+sp_test_seed_list_membership( 7001, 200 );
+
+$GLOBALS['spm_cli_log'] = array();
+( new SP_Merge_CLI() )->preview( array( '100', '200' ), array( 'format' => 'json' ) );
+$decoded = json_decode( (string) sp_test_last_log( 'log' ), true );
+
+sp_assert_same( 2, $decoded['events']['primary'] ?? null, "the primary's event count excludes its sp_list membership" );
+sp_assert_same( 1, $decoded['events']['duplicates'] ?? null, "the duplicate's event count excludes its sp_list membership" );
+sp_assert_same( 3, $decoded['events']['result'] ?? null, 'the merged total is the sum of the two real event counts' );
+sp_assert_same( 0, $decoded['collision_count'] ?? null, 'sharing a squad list is not a same-event collision' );
+
+$GLOBALS['spm_cli_log'] = array();
+( new SP_Merge_CLI() )->preview( array( '100', '200' ), array( 'porcelain' => true ) );
+sp_assert_same( 'OK', sp_test_last_log( 'log' ), 'and so does not produce a spurious --porcelain WARN' );
+
+// The same number, read the way `scan` reads it.
+$GLOBALS['spm_cli_log'] = array();
+( new SP_Merge_CLI() )->scan( array(), array() );
+
+$scan_rows  = null;
+foreach ( array_reverse( $GLOBALS['spm_cli_log'] ) as $entry ) {
+	if ( 'table' === $entry['level'] ) {
+		$scan_rows = $entry['message'];
+		break;
+	}
+}
+$scan_events = array();
+foreach ( (array) $scan_rows as $row ) {
+	$scan_events[ $row['player_id'] ] = $row['events'];
+}
+
+sp_assert_same( 2, $scan_events[100] ?? null, "scan reports the same event count for the primary as preview's Events row" );
+sp_assert_same( 1, $scan_events[200] ?? null, 'scan reports the same event count for the duplicate' );
+
+/* A real same-event collision is still detected. */
+sp_test_cli_reset();
+sp_test_set_player( 100, 'Primary Player' );
+sp_test_set_player( 200, 'Duplicate Player' );
+$GLOBALS['sp_posts'][9001] = (object) array(
+	'ID'          => 9001,
+	'post_type'   => 'sp_event',
+	'post_title'  => 'Match Day',
+	'post_status' => 'publish',
+);
+sp_test_seed_event( 9001, 100 );
+sp_test_seed_event( 9001, 200 );
+
+$GLOBALS['spm_cli_log'] = array();
+( new SP_Merge_CLI() )->preview( array( '100', '200' ), array( 'format' => 'json' ) );
+$decoded = json_decode( (string) sp_test_last_log( 'log' ), true );
+sp_assert_same( 1, $decoded['collision_count'] ?? null, 'two players in one real sp_event are still a collision' );
+
+/* -------------------------------------------------------------------------
+ * 4c. A Throwable out of the preview walk degrades to a warning; `preview`
+ *     still exits 0, as its documented contract requires.
+ * ---------------------------------------------------------------------- */
+
+sp_test_cli_reset();
+sp_test_set_player( 100, 'Primary Player' );
+sp_test_set_player( 200, 'Duplicate Player' );
+sp_test_throw_on( 'get_post_meta', 100, 'TypeError' );
+
+$GLOBALS['spm_cli_log'] = array();
+$threw                  = null;
+try {
+	( new SP_Merge_CLI() )->preview( array( '100', '200' ), array() );
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+
+sp_assert( null === $threw, 'a TypeError from the preview walk does not escape preview()' . ( $threw ? ' (' . get_class( $threw ) . ')' : '' ) );
+sp_assert_contains( 'injected TypeError', (string) sp_test_last_log( 'warning' ), 'the operator is told what went wrong' );
+
+/* -------------------------------------------------------------------------
  * 5. Lacking edit_sp_players refuses the preview outright.
  * ---------------------------------------------------------------------- */
 

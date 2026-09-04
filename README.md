@@ -75,7 +75,7 @@ The same merge/revert/backup functionality is available headless via `wp sp-merg
 | `wp sp-merge revert` | Revert a previously executed merge from its backup ID. |
 | `wp sp-merge backups list` | List recent merge backups. |
 | `wp sp-merge backups delete` | Permanently delete one or more merge backups. |
-| `wp sp-merge batch` | Run many merges from a CSV or JSON file in one pass, logging one record per row. |
+| `wp sp-merge batch` | Run many merges from a CSV or JSON file in one pass, logging one record per row. Requires `--yes` — it is not interactive. |
 
 Run `wp help sp-merge <subcommand>` for full flag documentation.
 
@@ -97,10 +97,14 @@ sportspress-player-merge/
 │   ├── class-sp-merge-ajax.php           # AJAX handlers
 │   ├── class-sp-merge-backup.php         # Backup/restore system
 │   ├── class-sp-merge-controller.php     # Component coordinator
+│   ├── class-sp-merge-cli.php            # wp sp-merge scan/preview/merge/revert/batch
+│   ├── class-sp-merge-cli-backups.php    # wp sp-merge backups list/delete
 │   ├── class-sp-merge-github-updater.php # Auto-update from GitHub releases
+│   ├── class-sp-merge-lock.php           # The one lock a merge or revert holds
 │   ├── class-sp-merge-name-matcher.php   # Fuzzy matching engine (14 scenarios)
 │   ├── class-sp-merge-preview.php        # Merge preview generation
-│   └── class-sp-merge-processor.php      # Core merge logic
+│   ├── class-sp-merge-processor.php      # Core merge logic
+│   └── class-sp-merge-validation.php     # Selection validation, event counts, certainty adjustments
 ├── includes/
 │   └── admin-page.php       # Admin page template
 ├── languages/

@@ -25,6 +25,26 @@ class SP_Merge_Validation {
 	private const HISTORY_WARNING_RATIO = 2;
 
 	/**
+	 * Certainty added when every member holds the same email address.
+	 */
+	private const EMAIL_BOOST = 20;
+
+	/**
+	 * Certainty added when every member plays for the same current team.
+	 */
+	private const TEAM_BOOST = 5;
+
+	/**
+	 * Certainty removed when members are listed at different positions.
+	 */
+	private const POSITION_PENALTY = 20;
+
+	/**
+	 * Floor the position penalty can never push a score below.
+	 */
+	private const POSITION_PENALTY_FLOOR = 50;
+
+	/**
 	 * Validate a primary/duplicate player selection.
 	 *
 	 * @param mixed $primary_id_raw    Raw primary player ID.
@@ -86,6 +106,118 @@ class SP_Merge_Validation {
 	}
 
 	/**
+	 * Read the signals a group's certainty is adjusted by, for one player.
+	 *
+	 * Shared by the AJAX duplicate scan and `wp sp-merge scan` so the score the
+	 * browser shows and the score `--min-certainty` filters on are computed from
+	 * exactly the same three inputs, read exactly the same way.
+	 *
+	 * @param int $player_id Player ID.
+	 * @return array{team: string, team_id: int, position: string, email: string}
+	 */
+	public static function certainty_signals( int $player_id ): array {
+		$team    = '';
+		$team_id = 0;
+
+		$team_ids = (array) get_post_meta( $player_id, 'sp_current_team' );
+		foreach ( array_reverse( $team_ids ) as $tid ) {
+			if ( $tid && '0' !== $tid ) {
+				$team_post = get_post( (int) $tid );
+				if ( $team_post && 'sp_team' === $team_post->post_type ) {
+					$team    = $team_post->post_title;
+					$team_id = (int) $team_post->ID;
+					break;
+				}
+			}
+		}
+
+		$positions = wp_get_post_terms( $player_id, 'sp_position', array( 'fields' => 'names' ) );
+		$position  = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
+
+		return array(
+			'team'     => $team,
+			'team_id'  => $team_id,
+			'position' => $position,
+			'email'    => get_post_meta( $player_id, 'spt_email', true ) ?: '',
+		);
+	}
+
+	/**
+	 * Apply the safety adjustments to a matched group's raw matcher score.
+	 *
+	 * The fuzzy matcher scores names and nothing else. These three signals are
+	 * what turns that into a score worth acting on: a shared email address is
+	 * near-proof, a shared current team is corroboration, and two different
+	 * positions is the strongest cheap signal that two same-named records are two
+	 * different people. The penalty matters most — a pair the browser demotes to
+	 * 70% ("low confidence", left unchecked by default) must not read as 90% to
+	 * `wp sp-merge scan --min-certainty=90`, on a tool that permanently deletes
+	 * posts.
+	 *
+	 * @param array $group   Group from SP_Merge_Name_Matcher::find_groups(); only its `certainty` is read.
+	 * @param array $members One entry per group member, each
+	 *                       array{email: string, position: string, team_id: int, certainty: int|null}.
+	 *                       A null member certainty means the matcher supplied none and is left null.
+	 * @return array{certainty: int, members: array} The adjusted group certainty, and $members with
+	 *                                               each non-null certainty adjusted by the same signals.
+	 */
+	public static function apply_certainty_adjustments( array $group, array $members ): array {
+		$certainty = (int) ( $group['certainty'] ?? 0 );
+
+		// Boost certainty when players share the same email address. Only the
+		// members actually holding that address earn the per-member boost.
+		$emails       = array_filter( array_column( $members, 'email' ), 'strlen' );
+		$shared_email = '';
+		if ( count( $emails ) >= 2 && count( array_unique( $emails ) ) === 1 ) {
+			$shared_email = (string) reset( $emails );
+			$certainty    = min( 100, $certainty + self::EMAIL_BOOST );
+		}
+
+		// Boost certainty when all players share the same team.
+		$team_boost = false;
+		$team_ids   = array_filter( array_column( $members, 'team_id' ) );
+		if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $members ) ) {
+			$team_boost = true;
+			$certainty  = min( 100, $certainty + self::TEAM_BOOST );
+		}
+
+		// Reduce certainty when players have different positions.
+		$position_penalty = false;
+		$all_positions    = array_filter( array_column( $members, 'position' ), 'strlen' );
+		if ( count( $all_positions ) >= 2 && count( array_unique( $all_positions ) ) > 1 ) {
+			$position_penalty = true;
+			$certainty        = max( self::POSITION_PENALTY_FLOOR, $certainty - self::POSITION_PENALTY );
+		}
+
+		// Apply the same signals to each member's own score so the per-member
+		// checkboxes (or CLI rows) and the group badge cannot tell different stories.
+		foreach ( $members as $index => $member ) {
+			if ( null === ( $member['certainty'] ?? null ) ) {
+				continue;
+			}
+
+			$score = (int) $member['certainty'];
+
+			if ( '' !== $shared_email && ( $member['email'] ?? '' ) === $shared_email ) {
+				$score = min( 100, $score + self::EMAIL_BOOST );
+			}
+			if ( $team_boost ) {
+				$score = min( 100, $score + self::TEAM_BOOST );
+			}
+			if ( $position_penalty ) {
+				$score = max( self::POSITION_PENALTY_FLOOR, $score - self::POSITION_PENALTY );
+			}
+
+			$members[ $index ]['certainty'] = $score;
+		}
+
+		return array(
+			'certainty' => $certainty,
+			'members'   => $members,
+		);
+	}
+
+	/**
 	 * Count the events each player appears in.
 	 *
 	 * @param int[] $player_ids Player IDs.
@@ -115,6 +247,48 @@ class SP_Merge_Validation {
 		}
 
 		return $counts;
+	}
+
+	/**
+	 * List the events each player appears in.
+	 *
+	 * The counting sibling above cannot answer "which events do these two players
+	 * share", which is what the preview's same-event collision warning needs, so
+	 * this returns the IDs themselves — restricted to `sp_event` by the same JOIN,
+	 * because `sp_list` posts carry `sp_player` meta too and two players merely
+	 * sharing a squad list are not colliding in an event.
+	 *
+	 * @param int[] $player_ids Player IDs.
+	 * @return array<int, int[]> Player ID => event IDs, zero-filled with empty arrays.
+	 */
+	public static function get_event_ids( array $player_ids ): array {
+		global $wpdb;
+
+		$player_ids = array_values( array_unique( array_filter( array_map( 'intval', $player_ids ) ) ) );
+		if ( empty( $player_ids ) ) {
+			return array();
+		}
+
+		$events       = array_fill_keys( $player_ids, array() );
+		$placeholders = implode( ',', array_fill( 0, count( $player_ids ), '%s' ) );
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				"SELECT pm.meta_value AS player_id, pm.post_id AS event_id FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE p.post_type = 'sp_event' AND pm.meta_key = 'sp_player' AND pm.meta_value IN ($placeholders)",
+				...$player_ids
+			)
+		);
+
+		foreach ( (array) $rows as $row ) {
+			$player_id = (int) $row->player_id;
+			if ( ! isset( $events[ $player_id ] ) ) {
+				continue;
+			}
+			$events[ $player_id ][] = (int) $row->event_id;
+		}
+
+		return $events;
 	}
 
 	/**

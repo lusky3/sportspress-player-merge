@@ -123,10 +123,11 @@ class SP_Merge_Preview {
 			);
 		}
 
-		$primary_events   = $this->get_event_count_for_player( $primary_id );
+		$event_counts     = SP_Merge_Validation::get_event_counts( $all_ids );
+		$primary_events   = $event_counts[ $primary_id ] ?? 0;
 		$duplicate_events = 0;
 		foreach ( $duplicate_ids as $dup_id ) {
-			$duplicate_events += $this->get_event_count_for_player( (int) $dup_id );
+			$duplicate_events += $event_counts[ (int) $dup_id ] ?? 0;
 		}
 
 		$resolutions = $this->compute_array_field_resolutions( $primary_id, $duplicate_ids );
@@ -231,33 +232,27 @@ class SP_Merge_Preview {
 	 * preview and a browser preview can never disagree about how many events are
 	 * contested.
 	 *
+	 * Reads through SP_Merge_Validation::get_event_ids(), which restricts to
+	 * `post_type = 'sp_event'`: the raw `sp_player` meta rows this used to scan
+	 * also cover `sp_list` posts (see SP_Merge_Processor::update_player_list_references()),
+	 * so two players who merely appear on the same squad list were being reported
+	 * as a same-event collision — a spurious WARN out of `preview --porcelain`.
+	 *
 	 * @param int   $primary_id    Primary player ID.
 	 * @param int[] $duplicate_ids Duplicate player IDs.
 	 * @return int Number of events naming both the primary and a duplicate.
 	 */
 	private function count_collision_events( int $primary_id, array $duplicate_ids ): int {
-		global $wpdb;
+		$event_ids = SP_Merge_Validation::get_event_ids( array_merge( array( $primary_id ), $duplicate_ids ) );
 
-		// Find events where primary player appears.
-		$primary_events = $wpdb->get_col(
-			$wpdb->prepare(
-				"SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
-				(string) $primary_id
-			)
-		);
-
+		$primary_events = $event_ids[ $primary_id ] ?? array();
 		if ( empty( $primary_events ) ) {
 			return 0;
 		}
 
 		$collision_count = 0;
 		foreach ( $duplicate_ids as $dup_id ) {
-			$dup_events = $wpdb->get_col(
-				$wpdb->prepare(
-					"SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
-					(string) $dup_id
-				)
-			);
+			$dup_events       = $event_ids[ (int) $dup_id ] ?? array();
 			$collision_count += count( array_intersect( $primary_events, $dup_events ) );
 		}
 
@@ -542,39 +537,25 @@ class SP_Merge_Preview {
 	}
 
 	/**
-	 * Count the events a single player appears in.
-	 *
-	 * Shared by the HTML event-count row and generate_data(); called once per
-	 * player rather than batched, so a terminal preview reads the same total the
-	 * table already shows.
-	 *
-	 * @param int $player_id Player ID.
-	 * @return int Number of events the player appears in.
-	 */
-	private function get_event_count_for_player( int $player_id ): int {
-		global $wpdb;
-
-		return (int) $wpdb->get_var(
-			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
-				(string) $player_id
-			)
-		);
-	}
-
-	/**
 	 * Render the event count row.
+	 *
+	 * Counted through SP_Merge_Validation::get_event_counts(): one batched query
+	 * for every player in the merge rather than one query per duplicate, and — as
+	 * with the collision count above — restricted to real `sp_event` posts, so
+	 * this row, `wp sp-merge preview` and `wp sp-merge scan`'s events column all
+	 * report the same number for the same player.
 	 *
 	 * @param int   $primary_id    Primary player ID.
 	 * @param int[] $duplicate_ids Duplicate player IDs.
 	 * @return string HTML.
 	 */
 	private function render_event_count_row( int $primary_id, array $duplicate_ids ): string {
-		$primary_count = $this->get_event_count_for_player( $primary_id );
+		$event_counts  = SP_Merge_Validation::get_event_counts( array_merge( array( $primary_id ), $duplicate_ids ) );
+		$primary_count = $event_counts[ $primary_id ] ?? 0;
 
 		$dup_count = 0;
 		foreach ( $duplicate_ids as $dup_id ) {
-			$dup_count += $this->get_event_count_for_player( (int) $dup_id );
+			$dup_count += $event_counts[ (int) $dup_id ] ?? 0;
 		}
 
 		$none = esc_html__( 'None', 'sportspress-player-merge' );

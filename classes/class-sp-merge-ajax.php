@@ -487,41 +487,38 @@ class SP_Merge_Ajax {
 		$groups = array();
 		foreach ( $matched_groups as $mg ) {
 			$details = array();
-			$teams   = array();
+			$members = array();
 			foreach ( $mg['players'] as $p ) {
 				$player_id = (int) $this->member_value( $p, 'ID', 0 );
 				if ( ! $player_id ) {
 					continue;
 				}
 
-				$team    = '';
-				$team_id = 0;
-				$t_ids   = get_post_meta( $player_id, 'sp_current_team' );
-				foreach ( array_reverse( $t_ids ) as $tid ) {
-					if ( $tid && '0' !== $tid ) {
-						$t = get_post( (int) $tid );
-						if ( $t && 'sp_team' === $t->post_type ) {
-							$team    = $t->post_title;
-							$team_id = $t->ID;
-							break;
-						}
-					}
-				}
-				$teams[]   = $team_id;
-				$events    = $event_counts[ $player_id ] ?? 0;
-				$positions = wp_get_post_terms( $player_id, 'sp_position', array( 'fields' => 'names' ) );
-				$position  = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
+				// Team, position and email are read through the shared helper so
+				// `wp sp-merge scan` cannot end up scoring the same group from
+				// differently-read signals.
+				$signals = SP_Merge_Validation::certainty_signals( $player_id );
+
+				// Null when the matcher supplied none; the UI then treats the
+				// member as low confidence and leaves it unchecked.
+				$certainty = $this->member_certainty( $p, $mg, $player_id );
+
 				$details[] = array(
 					'id'        => $player_id,
 					'name'      => (string) $this->member_value( $p, 'post_title', '' ),
-					'team'      => $team,
-					'position'  => $position,
-					'events'    => $events,
-					'email'     => get_post_meta( $player_id, 'spt_email', true ) ?: '',
-					// Null when the matcher supplied none; the UI then treats the
-					// member as low confidence and leaves it unchecked.
-					'certainty' => $this->member_certainty( $p, $mg, $player_id ),
+					'team'      => $signals['team'],
+					'position'  => $signals['position'],
+					'events'    => $event_counts[ $player_id ] ?? 0,
+					'email'     => $signals['email'],
+					'certainty' => $certainty,
 					'edit_link' => get_edit_post_link( $player_id, 'raw' ),
+				);
+
+				$members[] = array(
+					'email'     => $signals['email'],
+					'position'  => $signals['position'],
+					'team_id'   => $signals['team_id'],
+					'certainty' => $certainty,
 				);
 			}
 
@@ -529,53 +526,14 @@ class SP_Merge_Ajax {
 				continue;
 			}
 
-			$certainty = (int) ( $mg['certainty'] ?? 0 );
+			// The email boost, team boost and position penalty all live on
+			// SP_Merge_Validation now, so the browser's badge and the CLI's
+			// --min-certainty filter are the same number by construction.
+			$adjusted  = SP_Merge_Validation::apply_certainty_adjustments( $mg, $members );
+			$certainty = $adjusted['certainty'];
 
-			// Boost certainty when players share the same email address. Only the
-			// members actually holding that address earn the per-member boost.
-			$emails       = array_filter( array_column( $details, 'email' ), 'strlen' );
-			$shared_email = '';
-			if ( count( $emails ) >= 2 && count( array_unique( $emails ) ) === 1 ) {
-				$shared_email = (string) reset( $emails );
-				$certainty    = min( 100, $certainty + 20 );
-			}
-
-			// Boost certainty when all players share the same team.
-			$team_boost = false;
-			$team_ids   = array_filter( $teams );
-			if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $details ) ) {
-				$team_boost = true;
-				$certainty  = min( 100, $certainty + 5 );
-			}
-
-			// Reduce certainty when players have different positions.
-			$position_penalty = false;
-			$all_positions    = array_column( $details, 'position' );
-			$all_positions    = array_filter( $all_positions, 'strlen' );
-			if ( count( $all_positions ) >= 2 && count( array_unique( $all_positions ) ) > 1 ) {
-				$position_penalty = true;
-				$certainty        = max( 50, $certainty - 20 );
-			}
-
-			// Apply the same signals to each member's own score so the per-member
-			// checkboxes and the group badge cannot tell different stories.
-			foreach ( $details as $index => $detail ) {
-				if ( null === $detail['certainty'] ) {
-					continue;
-				}
-
-				$member = $detail['certainty'];
-				if ( '' !== $shared_email && $detail['email'] === $shared_email ) {
-					$member = min( 100, $member + 20 );
-				}
-				if ( $team_boost ) {
-					$member = min( 100, $member + 5 );
-				}
-				if ( $position_penalty ) {
-					$member = max( 50, $member - 20 );
-				}
-
-				$details[ $index ]['certainty'] = $member;
+			foreach ( $adjusted['members'] as $index => $member ) {
+				$details[ $index ]['certainty'] = $member['certainty'];
 			}
 
 			$groups[] = array(

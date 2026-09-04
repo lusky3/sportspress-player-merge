@@ -49,6 +49,9 @@ class SP_Merge_CLI {
 	 *
 	 * [--min-certainty=<0-100>]
 	 * : Only report groups at or above this certainty. Default 0 (every group).
+	 * Compared against the same adjusted score the admin screen shows — the raw
+	 * name-matcher score after the shared email/team boosts and the
+	 * different-positions penalty, not the raw score itself.
 	 *
 	 * [--scenario=<name>]
 	 * : Only report groups matched by this exact scenario (e.g. "exact", "nickname", "typo").
@@ -88,6 +91,17 @@ class SP_Merge_CLI {
 		$scan   = ( new SP_Merge_Ajax() )->collect_scan_players();
 		$groups = SP_Merge_Name_Matcher::find_groups( $scan['players'] );
 
+		// Adjusted before anything is filtered or dropped: --min-certainty has to
+		// mean the same thing the admin screen's badge means, or a pair the
+		// browser demoted to "low confidence" would still pass --min-certainty=90
+		// on a command that permanently deletes posts.
+		$groups = array_map( array( $this, 'adjust_group_certainty' ), $groups );
+
+		// Re-sorted for the same reason SP_Merge_Ajax::find_duplicates() re-sorts:
+		// the adjustments can reorder the matcher's own ranking, and --limit must
+		// keep the strongest groups by the score actually being reported.
+		usort( $groups, static fn( $a, $b ) => $b['certainty'] - $a['certainty'] );
+
 		$groups = array_values(
 			array_filter(
 				$groups,
@@ -118,6 +132,52 @@ class SP_Merge_CLI {
 		} else {
 			\WP_CLI::log( sprintf( 'Scanned %1$d of %2$d players.', $scan['scanned'], $scan['total'] ) );
 		}
+	}
+
+	/**
+	 * Apply the shared certainty adjustments to one matched group.
+	 *
+	 * The name matcher scores names only. SP_Merge_Ajax::find_duplicates() has
+	 * always applied three further signals to that score before showing it — a
+	 * shared email boosts, a shared current team boosts, differing positions
+	 * penalise down to a floor of 50 — and `scan` reported the raw score instead,
+	 * which reads as *more* confident than the browser on exactly the pairs the
+	 * browser is warning about. Both now go through
+	 * SP_Merge_Validation::apply_certainty_adjustments().
+	 *
+	 * @param array $group One group from SP_Merge_Name_Matcher::find_groups().
+	 * @return array The same group with its group and per-member certainties adjusted.
+	 */
+	private function adjust_group_certainty( array $group ): array {
+		$members = array();
+
+		foreach ( $group['players'] as $member ) {
+			$player_id = (int) $member->ID;
+			$signals   = SP_Merge_Validation::certainty_signals( $player_id );
+
+			$members[] = array(
+				'email'     => $signals['email'],
+				'position'  => $signals['position'],
+				'team_id'   => $signals['team_id'],
+				'certainty' => $group['member_certainty'][ $player_id ] ?? ( $member->certainty ?? null ),
+			);
+		}
+
+		$adjusted           = SP_Merge_Validation::apply_certainty_adjustments( $group, $members );
+		$group['certainty'] = $adjusted['certainty'];
+
+		foreach ( array_values( $group['players'] ) as $index => $member ) {
+			$player_id = (int) $member->ID;
+			$score     = $adjusted['members'][ $index ]['certainty'] ?? null;
+
+			// The matcher hands out cloned post objects per group, so writing the
+			// adjusted score back cannot leak onto a cached WP_Post.
+			$member->certainty                       = $score;
+			$group['member_certainty'][ $player_id ] = $score;
+			$group['certainties'][ $player_id ]      = $score;
+		}
+
+		return $group;
 	}
 
 	/**
@@ -206,7 +266,18 @@ class SP_Merge_CLI {
 		$format        = $assoc_args['format'] ?? null;
 		$porcelain     = isset( $assoc_args['porcelain'] );
 
-		$data = ( new SP_Merge_Preview() )->generate_data( $primary_id, $duplicate_ids );
+		try {
+			$data = ( new SP_Merge_Preview() )->generate_data( $primary_id, $duplicate_ids );
+		} catch ( Throwable $e ) {
+			// Throwable, not Exception: generate_data() walks decade-old serialized
+			// postmeta through deep_merge_arrays(), and malformed legacy data raises
+			// a TypeError, which is not an Exception in PHP 8. Same guard every AJAX
+			// handler that calls SP_Merge_Preview already has. Degrades to a warning
+			// rather than an error() because this command's contract is to always
+			// exit 0 — a script branching on --porcelain reads the line, not the code.
+			\WP_CLI::warning( $e->getMessage() );
+			return;
+		}
 
 		$has_warning = $data['collision_count'] > 0 || ! empty( $data['array_field_conflicts'] );
 
@@ -427,6 +498,13 @@ class SP_Merge_CLI {
 	 * a real run would refuse at, and never reaches confirm()/execute_merge() —
 	 * merge() never sets this key, so its own behavior is completely unaffected.
 	 *
+	 * A Throwable raised while previewing (malformed legacy serialized meta walked
+	 * through deep_merge_arrays() raises a TypeError, which is not an Exception in
+	 * PHP 8) is caught and returned as a row failure for the same reason: a bad row
+	 * must be skippable, not fatal to the process. `backup_id` is whatever
+	 * execute_merge() returned even on failure — a failed merge deliberately
+	 * retains its backup, and that ID is the operator's recovery path.
+	 *
 	 * @param int   $primary_id    ID of the player that will survive the merge.
 	 * @param int[] $duplicate_ids ID(s) of the player(s) to merge in and delete.
 	 * @param array $assoc_args    Associative arguments: skip-preview, force, yes, dry-run.
@@ -442,12 +520,27 @@ class SP_Merge_CLI {
 			);
 		}
 
-		if ( ! isset( $assoc_args['skip-preview'] ) ) {
-			$preview_data = ( new SP_Merge_Preview() )->generate_data( $result['primary_id'], $result['duplicate_ids'] );
-			$this->render_preview_data( $preview_data );
+		try {
+			if ( ! isset( $assoc_args['skip-preview'] ) ) {
+				$preview_data = ( new SP_Merge_Preview() )->generate_data( $result['primary_id'], $result['duplicate_ids'] );
+				$this->render_preview_data( $preview_data );
+			}
+
+			$warnings = SP_Merge_Validation::survivor_warnings( $result['primary_id'], $result['duplicate_ids'] );
+		} catch ( Throwable $e ) {
+			// Throwable, not Exception: generate_data() walks legacy serialized
+			// postmeta through deep_merge_arrays()/preview_array_field_merge(),
+			// where malformed decade-old data raises a TypeError — not an Exception
+			// in PHP 8. Unguarded, one bad row would kill the whole PHP process
+			// mid-batch, which is exactly what --continue-on-error exists to
+			// prevent; as a row failure it is logged and skipped like any other.
+			return array(
+				'success'   => false,
+				'backup_id' => null,
+				'message'   => $e->getMessage(),
+			);
 		}
 
-		$warnings         = SP_Merge_Validation::survivor_warnings( $result['primary_id'], $result['duplicate_ids'] );
 		$warning_override = false;
 
 		if ( ! empty( $warnings ) ) {
@@ -498,7 +591,11 @@ class SP_Merge_CLI {
 		if ( ! $merge_result['success'] ) {
 			return array(
 				'success'   => false,
-				'backup_id' => null,
+				// execute_merge() deliberately returns the retained backup ID on
+				// failure — a failed-but-retained backup is the operator's recovery
+				// path, and for a batch row the log is the only place that ID is
+				// ever written down.
+				'backup_id' => $merge_result['backup_id'] ?? null,
 				'message'   => $merge_result['message'],
 			);
 		}
@@ -548,15 +645,25 @@ class SP_Merge_CLI {
 	 * large batch's merges.
 	 *
 	 * Rows are processed strictly in file order with a plain sequential loop —
-	 * the `sp_merge_lock` transient inside SP_Merge_Processor::execute_merge()
-	 * already serializes merges, so this deliberately adds no locking of its own.
+	 * the shared `sp_merge_lock` (SP_Merge_Lock, taken by both
+	 * SP_Merge_Processor::execute_merge() and SP_Merge_Backup::revert()) already
+	 * serializes merges, so this deliberately adds no locking of its own.
+	 *
+	 * `--yes` is mandatory here, unlike on `merge`. Confirmation is asked per row,
+	 * and WP-CLI's confirm() exits 0 when it cannot read an answer — so without
+	 * `--yes` a batch run from cron would exit successfully having merged nothing,
+	 * with an all-but-empty log. Use `merge` when you want to confirm
+	 * interactively.
 	 *
 	 * ## OPTIONS
 	 *
 	 * <file>
-	 * : Path to the CSV or JSON input file. CSV rows are `primary_id,duplicate_ids`
-	 * with no header row, where duplicate_ids is `;`-joined (e.g. `101,205;309`).
-	 * JSON is an array of `{"primary_id": 101, "duplicate_ids": [205, 309]}` objects.
+	 * : Path to the CSV or JSON input file. Must be a readable local file. CSV rows
+	 * are `primary_id,duplicate_ids` with no header row, where duplicate_ids is
+	 * `;`-joined (e.g. `101,205;309`) — a row with any other shape is rejected and
+	 * logged as a row failure rather than run as a smaller merge. JSON is an array
+	 * of `{"primary_id": 101, "duplicate_ids": [205, 309]}` objects, where
+	 * duplicate_ids must really be an array of player IDs.
 	 *
 	 * [--format=<csv|json>]
 	 * : Input format. Defaults to sniffing the file extension (.csv or .json);
@@ -580,19 +687,21 @@ class SP_Merge_CLI {
 	 * [--force]
 	 * : Proceed despite a survivor warning on any row (see `merge`'s --force).
 	 *
-	 * [--yes]
-	 * : Skip the confirmation prompt for every row.
+	 * --yes
+	 * : Required. Skip the confirmation prompt for every row. `batch` is not
+	 * interactive — see above.
 	 *
 	 * --log=<path>
-	 * : Required. Path to append one JSON-Lines record to per processed row.
+	 * : Required. Path to append one JSON-Lines record to per processed row. The
+	 * parent directory must already exist and be writable.
 	 *
 	 * ## EXAMPLES
 	 *
 	 *     # players.csv contains, one row per merge, no header:
 	 *     # 101,205;309
-	 *     wp sp-merge batch players.csv --log=/tmp/batch.log
-	 *     wp sp-merge batch players.json --continue-on-error --log=/tmp/batch.log
-	 *     wp sp-merge batch players.csv --dry-run --log=/tmp/batch.log
+	 *     wp sp-merge batch players.csv --yes --log=/tmp/batch.log
+	 *     wp sp-merge batch players.json --yes --continue-on-error --log=/tmp/batch.log
+	 *     wp sp-merge batch players.csv --yes --dry-run --log=/tmp/batch.log
 	 *
 	 * @param array $args       Positional arguments: the input file path.
 	 * @param array $assoc_args Associative arguments: format, stop-on-error,
@@ -602,6 +711,14 @@ class SP_Merge_CLI {
 	public function batch( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
 			\WP_CLI::error( 'Insufficient permissions.' );
+		}
+
+		// Checked before anything else, and before a single row is read: WP-CLI's
+		// confirm() calls a bare exit(0) when it cannot read a `y` — which is what
+		// fgets(STDIN) returns in a non-TTY context like cron — so an unattended
+		// `batch` without --yes would exit *successfully* having merged nothing.
+		if ( ! isset( $assoc_args['yes'] ) ) {
+			\WP_CLI::error( '--yes is required for batch — it is not interactive. Use merge to confirm a single operation interactively.' );
 		}
 
 		if ( isset( $assoc_args['stop-on-error'] ) && isset( $assoc_args['continue-on-error'] ) ) {
@@ -615,7 +732,16 @@ class SP_Merge_CLI {
 
 		$file = $args[0] ?? null;
 		if ( null === $file ) {
-			\WP_CLI::error( 'Usage: wp sp-merge batch <file> --log=<path>' );
+			\WP_CLI::error( 'Usage: wp sp-merge batch <file> --yes --log=<path>' );
+		}
+
+		// is_file() is false for every stream-wrapper path (http://, php://, ...),
+		// so with PHP's default allow_url_fopen this is what stops a URL in the
+		// <file> argument from fetching a merge list over the network — and it
+		// turns a mistyped local path into this clean error instead of a raw
+		// file_get_contents() warning followed by one.
+		if ( ! is_file( $file ) || ! is_readable( $file ) ) {
+			\WP_CLI::error( sprintf( 'Cannot read input file: %s', $file ) );
 		}
 
 		$format = $assoc_args['format'] ?? $this->sniff_batch_format( $file );
@@ -630,6 +756,13 @@ class SP_Merge_CLI {
 
 		$rows = 'csv' === $format ? $this->parse_batch_csv( $contents ) : $this->parse_batch_json( $contents );
 
+		// Checked before fopen() for the same reason as the input file above: a
+		// typo'd --log directory should be one clean error, not a PHP warning.
+		$log_dir = dirname( $log_path );
+		if ( ! is_dir( $log_dir ) || ! ( is_writable( $log_path ) || is_writable( $log_dir ) ) ) {
+			\WP_CLI::error( sprintf( 'Cannot write log file: %s (its directory must exist, and the log must be creatable or writable)', $log_path ) );
+		}
+
 		$log_handle = fopen( $log_path, 'a' );
 		if ( false === $log_handle ) {
 			\WP_CLI::error( sprintf( 'Could not open log file for writing: %s', $log_path ) );
@@ -642,23 +775,23 @@ class SP_Merge_CLI {
 		$failed            = 0;
 
 		foreach ( $rows as $row ) {
-			$outcome = $this->run_one_merge( $row['primary_id'], $row['duplicate_ids'], $assoc_args );
+			// A row the parser refused never reaches run_one_merge(): it is a row
+			// failure like any other, so it is logged, warned about, and respects
+			// --stop-on-error / --continue-on-error — rather than being silently
+			// coerced into a smaller merge than the file asked for.
+			if ( isset( $row['_parse_error'] ) ) {
+				$outcome = array(
+					'success'   => false,
+					'backup_id' => null,
+					'message'   => $row['_parse_error'],
+				);
+			} else {
+				$outcome = $this->run_one_merge( $row['primary_id'], $row['duplicate_ids'], $assoc_args );
+			}
 
 			// Written and flushed immediately, one row at a time: a crash mid-batch
 			// must not lose the backup IDs of rows that already finished.
-			fwrite(
-				$log_handle,
-				wp_json_encode(
-					array(
-						'primary_id'    => $row['primary_id'],
-						'duplicate_ids' => $row['duplicate_ids'],
-						'success'       => $outcome['success'],
-						'backup_id'     => $outcome['backup_id'],
-						'message'       => $outcome['message'],
-					)
-				) . "\n"
-			);
-			fflush( $log_handle );
+			$this->write_log_row( $log_handle, $row, $outcome );
 
 			++$processed;
 
@@ -708,6 +841,53 @@ class SP_Merge_CLI {
 	}
 
 	/**
+	 * Append one row's JSON-Lines record to the batch log, and flush it.
+	 *
+	 * wp_json_encode() returns false on an encoding failure — invalid UTF-8 in a
+	 * legacy player title reaching this through an error `message` is enough — and
+	 * `false . "\n"` writes a blank line, silently losing the one record of what
+	 * happened to that row. A minimal ASCII-safe record is written instead: the
+	 * IDs are always encodable, so the row remains traceable and, if it produced a
+	 * backup, revertible.
+	 *
+	 * @param resource $log_handle Open append-mode log handle.
+	 * @param array    $row        Parsed input row.
+	 * @param array    $outcome    run_one_merge()'s result for that row.
+	 */
+	private function write_log_row( $log_handle, array $row, array $outcome ): void {
+		$record = array(
+			'primary_id'    => $row['primary_id'],
+			'duplicate_ids' => $row['duplicate_ids'],
+			'success'       => $outcome['success'],
+			'backup_id'     => $outcome['backup_id'],
+			'message'       => $outcome['message'],
+		);
+
+		$encoded = wp_json_encode( $record );
+
+		if ( false === $encoded ) {
+			$encoded = wp_json_encode(
+				array(
+					'primary_id'    => $row['primary_id'],
+					'duplicate_ids' => $row['duplicate_ids'],
+					'success'       => $outcome['success'],
+					'backup_id'     => $outcome['backup_id'],
+					'message'       => 'This row\'s real result could not be JSON-encoded (invalid UTF-8); IDs and outcome preserved.',
+				)
+			);
+		}
+
+		if ( false === $encoded ) {
+			// Only reachable if even the IDs cannot be encoded, which they always
+			// can — but a blank line in this log is never acceptable.
+			$encoded = '{"success":false,"message":"unencodable batch row"}';
+		}
+
+		fwrite( $log_handle, $encoded . "\n" );
+		fflush( $log_handle );
+	}
+
+	/**
 	 * Sniff a batch input format from its file extension.
 	 *
 	 * @param string $file Input file path.
@@ -731,16 +911,23 @@ class SP_Merge_CLI {
 	 * Parse batch CSV input into the uniform row shape run_one_merge() expects.
 	 *
 	 * Row shape: `primary_id,duplicate_ids`, duplicate_ids `;`-joined
-	 * (e.g. `101,205;309`). No header row. absint() normalizes every ID exactly
-	 * as SP_Merge_Validation::validate_merge_selection() would anyway, so a
-	 * malformed row (blank primary, non-numeric ID) surfaces as that row's own
-	 * "Invalid player selection" failure rather than a parse-time fatal.
+	 * (e.g. `101,205;309`). No header row.
+	 *
+	 * The raw duplicate-IDs field is validated *before* it is turned into IDs,
+	 * because absint() is far too forgiving to be a validator here: a row written
+	 * `101,205,309` (commas, the mistake anyone would make) used to parse as
+	 * `$fields[1] === '205'`, silently dropping 309 and executing a smaller,
+	 * different merge than the file specified — and reporting success. A row that
+	 * is not exactly two fields, or whose second field is not `;`-separated digit
+	 * runs, is refused and carried through as a `_parse_error` row so batch()
+	 * logs it as a failure instead.
 	 *
 	 * @param string $contents Raw file contents.
-	 * @return array{primary_id: int, duplicate_ids: int[]}[]
+	 * @return array{primary_id: int, duplicate_ids: int[], _parse_error?: string}[]
 	 */
 	private function parse_batch_csv( string $contents ): array {
-		$rows = array();
+		$rows   = array();
+		$number = 0;
 
 		foreach ( preg_split( '/\r\n|\r|\n/', trim( $contents ) ) as $line ) {
 			$line = trim( $line );
@@ -748,13 +935,41 @@ class SP_Merge_CLI {
 				continue;
 			}
 
-			$fields = str_getcsv( $line );
+			++$number;
+			$fields = array_map( 'trim', str_getcsv( $line ) );
+
+			if ( 2 !== count( $fields ) ) {
+				$rows[] = $this->malformed_batch_row(
+					absint( $fields[0] ?? 0 ),
+					sprintf(
+						'Malformed row %1$d: expected exactly 2 comma-separated fields (primary_id,duplicate_ids), found %2$d in "%3$s". Join multiple duplicate IDs with ";", not ",".',
+						$number,
+						count( $fields ),
+						$line
+					)
+				);
+				continue;
+			}
+
+			if ( 1 !== preg_match( '/^\d+$/', $fields[0] ) ) {
+				$rows[] = $this->malformed_batch_row(
+					0,
+					sprintf( 'Malformed row %1$d: primary_id "%2$s" is not a player ID.', $number, $fields[0] )
+				);
+				continue;
+			}
+
+			if ( 1 !== preg_match( '/^\d+(;\d+)*$/', $fields[1] ) ) {
+				$rows[] = $this->malformed_batch_row(
+					absint( $fields[0] ),
+					sprintf( 'Malformed row %1$d: duplicate_ids "%2$s" must be one player ID, or several joined with ";".', $number, $fields[1] )
+				);
+				continue;
+			}
 
 			$rows[] = array(
-				'primary_id'    => absint( $fields[0] ?? 0 ),
-				'duplicate_ids' => array_values(
-					array_filter( array_map( 'absint', explode( ';', (string) ( $fields[1] ?? '' ) ) ) )
-				),
+				'primary_id'    => absint( $fields[0] ),
+				'duplicate_ids' => array_values( array_map( 'absint', explode( ';', $fields[1] ) ) ),
 			);
 		}
 
@@ -762,15 +977,37 @@ class SP_Merge_CLI {
 	}
 
 	/**
+	 * Build the row batch() logs for input the parser refused.
+	 *
+	 * Deliberately not a best-effort recovery: whatever the row meant, executing
+	 * some subset of it is worse than refusing it, because the subset merge is
+	 * still a permanent deletion and it would report success.
+	 *
+	 * @param int    $primary_id Primary ID if one could be read, else 0 — logged for traceability only.
+	 * @param string $message    Operator-facing description of what was wrong.
+	 * @return array{primary_id: int, duplicate_ids: int[], _parse_error: string}
+	 */
+	private function malformed_batch_row( int $primary_id, string $message ): array {
+		return array(
+			'primary_id'    => $primary_id,
+			'duplicate_ids' => array(),
+			'_parse_error'  => $message,
+		);
+	}
+
+	/**
 	 * Parse batch JSON input into the uniform row shape run_one_merge() expects.
 	 *
 	 * Shape: an array of `{"primary_id": 101, "duplicate_ids": [205, 309]}`
-	 * objects. As with the CSV parser, IDs are absint()-normalized here rather
-	 * than validated — an invalid row still reaches run_one_merge() and fails
-	 * there, exactly like a bad CSV row.
+	 * objects. `duplicate_ids` has to actually be an array of player IDs: the old
+	 * `(array) $entry['duplicate_ids']` accepted a string, so a hand-written
+	 * `"duplicate_ids": "205;309"` became `absint( '205;309' )` — a single ID of
+	 * 205, dropping 309 and executing a smaller, different merge than the file
+	 * specified. As with the CSV parser, a refused row becomes a `_parse_error`
+	 * row that batch() logs as a failure.
 	 *
 	 * @param string $contents Raw file contents.
-	 * @return array{primary_id: int, duplicate_ids: int[]}[]
+	 * @return array{primary_id: int, duplicate_ids: int[], _parse_error?: string}[]
 	 */
 	private function parse_batch_json( string $contents ): array {
 		$decoded = json_decode( $contents, true );
@@ -779,18 +1016,86 @@ class SP_Merge_CLI {
 			\WP_CLI::error( 'Invalid JSON input: expected an array of {"primary_id":.., "duplicate_ids":[..]} objects.' );
 		}
 
-		$rows = array();
+		$rows   = array();
+		$number = 0;
 
 		foreach ( $decoded as $entry ) {
+			++$number;
+
+			if ( ! is_array( $entry ) ) {
+				$rows[] = $this->malformed_batch_row(
+					0,
+					sprintf( 'Malformed row %d: expected a {"primary_id":.., "duplicate_ids":[..]} object.', $number )
+				);
+				continue;
+			}
+
+			if ( ! $this->is_player_id( $entry['primary_id'] ?? null ) ) {
+				$rows[] = $this->malformed_batch_row(
+					0,
+					sprintf( 'Malformed row %d: primary_id must be a positive player ID.', $number )
+				);
+				continue;
+			}
+
+			$duplicates = $entry['duplicate_ids'] ?? null;
+
+			if ( ! is_array( $duplicates ) || empty( $duplicates ) ) {
+				$rows[] = $this->malformed_batch_row(
+					absint( $entry['primary_id'] ),
+					sprintf(
+						'Malformed row %1$d: duplicate_ids must be a non-empty array of player IDs, got %2$s.',
+						$number,
+						is_string( $duplicates ) ? '"' . $duplicates . '"' : gettype( $duplicates )
+					)
+				);
+				continue;
+			}
+
+			$invalid = array_filter(
+				$duplicates,
+				function ( $value ): bool {
+					return ! $this->is_player_id( $value );
+				}
+			);
+
+			if ( ! empty( $invalid ) ) {
+				$rows[] = $this->malformed_batch_row(
+					absint( $entry['primary_id'] ),
+					sprintf( 'Malformed row %d: every duplicate_ids entry must be a positive player ID.', $number )
+				);
+				continue;
+			}
+
 			$rows[] = array(
-				'primary_id'    => absint( $entry['primary_id'] ?? 0 ),
-				'duplicate_ids' => array_values(
-					array_filter( array_map( 'absint', (array) ( $entry['duplicate_ids'] ?? array() ) ) )
-				),
+				'primary_id'    => absint( $entry['primary_id'] ),
+				'duplicate_ids' => array_values( array_map( 'absint', $duplicates ) ),
 			);
 		}
 
 		return $rows;
+	}
+
+	/**
+	 * Is this raw JSON value a usable player ID?
+	 *
+	 * A positive integer, or a string of nothing but digits denoting one. Anything
+	 * else — a float, a list, "205;309", "12abc" — is rejected rather than run
+	 * through absint(), which would turn most of them into some other number.
+	 *
+	 * @param mixed $value Raw value from the decoded JSON.
+	 * @return bool
+	 */
+	private function is_player_id( $value ): bool {
+		if ( is_int( $value ) ) {
+			return $value > 0;
+		}
+
+		if ( is_string( $value ) ) {
+			return 1 === preg_match( '/^\d+$/', $value ) && absint( $value ) > 0;
+		}
+
+		return false;
 	}
 
 	/**
@@ -804,7 +1109,9 @@ class SP_Merge_CLI {
 	 * would be discarded and asked to confirm a second, forced call. A
 	 * `conflict` refusal (a later merge overlaps this one) is never forceable,
 	 * by design of SP_Merge_Backup::revert() itself — reverting it requires
-	 * unwinding the later merge first.
+	 * unwinding the later merge first. Neither is a `locked` refusal, which means
+	 * a merge (very likely a `batch` run) or another revert holds the shared merge
+	 * lock right now: wait for it to finish and try again.
 	 *
 	 * ## OPTIONS
 	 *
