@@ -169,7 +169,7 @@ namespace {
 	/**
 	 * Look up a stub user by field/value, from a table tests seed directly.
 	 *
-	 * Needed by a later change (backups/merge subcommands resolve --user by
+	 * Needed by a later change (backups/revert subcommands resolve --owner by
 	 * login/email/ID); added now so it lives with the rest of the CLI mocks.
 	 *
 	 * @param string     $field Field name: 'id', 'login', 'email', etc.

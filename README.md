@@ -79,7 +79,9 @@ The same merge/revert/backup functionality is available headless via `wp sp-merg
 
 Run `wp help sp-merge <subcommand>` for full flag documentation.
 
-WP-CLI has no logged-in web session, so it relies entirely on its own global `--user=<id|login>` flag to set the acting identity — `current_user_can()` is checked exactly as it is for the AJAX-driven admin page. The mutating subcommands (`merge`, `revert`, `backups delete`, `batch`) require `--user` to point at an account holding `manage_sportspress` (or `delete_sp_players`, for `backups delete`); without it, there is no logged-in user and every one of these refuses with "Insufficient permissions."
+WP-CLI has no logged-in web session, so it relies entirely on its own global `--user=<id|login>` flag to set the *acting* identity — `current_user_can()` is checked exactly as it is for the AJAX-driven admin page. The mutating subcommands (`merge`, `revert`, `backups delete`, `batch`) require `--user` to point at an account holding `manage_sportspress` (or `delete_sp_players`, for `backups delete`); without it, there is no logged-in user and every one of these refuses with "Insufficient permissions."
+
+`revert`, `backups list`, and `backups delete` additionally accept the plugin's own `--owner=<id|login>` flag, which is a completely different thing: it targets *whose* backup to act on, defaulting to the acting user's own backups. These are deliberately two separate flags rather than one, because WP-CLI's runtime consumes its own global `--user` before any command code runs — a command can never read `--user` back out of its arguments — so the plugin cannot reuse that name for a second, unrelated meaning. Targeting anyone else's backups via `--owner` requires the acting user (set by `--user`) to hold `delete_sp_players`. For example, an Administrator reverting a League Manager's merge runs `wp sp-merge revert merge_123 --user=admin --owner=league_manager_login`.
 
 ## File Structure
 

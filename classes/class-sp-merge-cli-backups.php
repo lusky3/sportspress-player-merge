@@ -40,7 +40,7 @@ class SP_Merge_CLI_Backups {
 	 *
 	 * ## OPTIONS
 	 *
-	 * [--user=<id|login>]
+	 * [--owner=<id|login>]
 	 * : List backups owned by another user instead of the current user.
 	 * Ignored when --all-users is passed. Targeting anyone else requires the
 	 * delete_sp_players capability.
@@ -71,7 +71,7 @@ class SP_Merge_CLI_Backups {
 	 *     wp sp-merge backups list --all-users --status=active
 	 *
 	 * @param array $args       Positional arguments (unused).
-	 * @param array $assoc_args Associative arguments: user, all-users, status, limit, format.
+	 * @param array $assoc_args Associative arguments: owner, all-users, status, limit, format.
 	 */
 	public function list( $args, $assoc_args ): void {
 		$all_users    = isset( $assoc_args['all-users'] );
@@ -85,7 +85,7 @@ class SP_Merge_CLI_Backups {
 			);
 		}
 
-		$user_id = $all_users ? null : $this->resolve_target_user( $assoc_args['user'] ?? null );
+		$user_id = $all_users ? null : $this->resolve_target_user( $assoc_args['owner'] ?? null );
 		$status  = $assoc_args['status'] ?? null;
 		$format  = $assoc_args['format'] ?? 'table';
 		$admin   = new SP_Merge_Admin();
@@ -150,7 +150,7 @@ class SP_Merge_CLI_Backups {
 	 * <backup-id>...
 	 * : Backup ID(s) to delete.
 	 *
-	 * [--user=<id|login>]
+	 * [--owner=<id|login>]
 	 * : Delete backup(s) owned by another user instead of the current user.
 	 *
 	 * [--yes]
@@ -161,7 +161,7 @@ class SP_Merge_CLI_Backups {
 	 *     wp sp-merge backups delete merge_1700000000_abcd1234 --yes
 	 *
 	 * @param array $args       Positional arguments: backup ID(s).
-	 * @param array $assoc_args Associative arguments: user, yes.
+	 * @param array $assoc_args Associative arguments: owner, yes.
 	 */
 	public function delete( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'delete_sp_players' ) ) {
@@ -173,9 +173,9 @@ class SP_Merge_CLI_Backups {
 		}
 
 		// The helper's own capability check always passes here — delete_sp_players
-		// was already required above — but it still resolves --user consistently
+		// was already required above — but it still resolves --owner consistently
 		// with every other subcommand, so it is reused rather than duplicated.
-		$owner_id = $this->resolve_target_user( $assoc_args['user'] ?? null );
+		$owner_id = $this->resolve_target_user( $assoc_args['owner'] ?? null );
 
 		\WP_CLI::warning( 'Deleting a backup permanently removes the only recovery path for that merge.' );
 		\WP_CLI::confirm(
@@ -194,7 +194,7 @@ class SP_Merge_CLI_Backups {
 	 * Defaults to the current user. An explicit target is only permitted for a
 	 * caller holding delete_sp_players — the same tier the AJAX layer requires
 	 * for touching another user's backups at all — so a League Manager cannot
-	 * use `--user` to reach into an Administrator's (or another League
+	 * use `--owner` to reach into an Administrator's (or another League
 	 * Manager's) backups.
 	 *
 	 * A near-identical copy of this method lives on SP_Merge_CLI (used by
@@ -202,7 +202,7 @@ class SP_Merge_CLI_Backups {
 	 * duplicated rather than introducing a cross-class dependency for one small
 	 * helper — see the note on that copy for the full rationale.
 	 *
-	 * @param string|null $user_arg Raw --user value: numeric ID or login, or null/empty for "self".
+	 * @param string|null $user_arg Raw --owner value: numeric ID or login, or null/empty for "self".
 	 * @return int Resolved user ID.
 	 */
 	private function resolve_target_user( ?string $user_arg ): int {

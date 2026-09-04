@@ -811,7 +811,7 @@ class SP_Merge_CLI {
 	 * <backup-id>
 	 * : Backup ID to revert.
 	 *
-	 * [--user=<id|login>]
+	 * [--owner=<id|login>]
 	 * : Revert a backup owned by another user. Defaults to the current user;
 	 * targeting anyone else requires the delete_sp_players capability.
 	 *
@@ -828,7 +828,7 @@ class SP_Merge_CLI {
 	 *     wp sp-merge revert merge_1700000000_abcd1234 --force --yes
 	 *
 	 * @param array $args       Positional arguments: the backup ID.
-	 * @param array $assoc_args Associative arguments: user, force, yes.
+	 * @param array $assoc_args Associative arguments: owner, force, yes.
 	 */
 	public function revert( $args, $assoc_args ): void {
 		if ( ! current_user_can( 'manage_sportspress' ) && ! current_user_can( 'delete_sp_players' ) ) {
@@ -840,7 +840,7 @@ class SP_Merge_CLI {
 			\WP_CLI::error( 'Usage: wp sp-merge revert <backup-id>' );
 		}
 
-		$owner_id = $this->resolve_target_user( $assoc_args['user'] ?? null );
+		$owner_id = $this->resolve_target_user( $assoc_args['owner'] ?? null );
 		$backup   = new SP_Merge_Backup();
 
 		// Always the first call, whether or not --force was passed: it either
@@ -883,7 +883,7 @@ class SP_Merge_CLI {
 	 * Defaults to the current user. An explicit target is only permitted for a
 	 * caller holding delete_sp_players — the same tier the AJAX layer requires
 	 * for touching another user's backups at all — so a League Manager cannot
-	 * use `--user` to reach into an Administrator's (or another League
+	 * use `--owner` to reach into an Administrator's (or another League
 	 * Manager's) backups.
 	 *
 	 * A near-identical copy of this method lives on SP_Merge_CLI_Backups (see
@@ -893,7 +893,7 @@ class SP_Merge_CLI {
 	 * on the other, so the few lines are duplicated rather than introducing a
 	 * cross-class dependency for one small helper.
 	 *
-	 * @param string|null $user_arg Raw --user value: numeric ID or login, or null/empty for "self".
+	 * @param string|null $user_arg Raw --owner value: numeric ID or login, or null/empty for "self".
 	 * @return int Resolved user ID.
 	 */
 	private function resolve_target_user( ?string $user_arg ): int {

@@ -4,7 +4,7 @@
  * cross-user access the same way resolve_target_user() and the AJAX layer do:
  * --all-users on `list` escalates the required capability from edit_sp_players
  * to delete_sp_players; `delete` always requires delete_sp_players outright,
- * with no lower "delete your own backup" tier; and --user on either command
+ * with no lower "delete your own backup" tier; and --owner on either command
  * refuses via resolve_target_user() unless the caller holds delete_sp_players.
  *
  * @package SportsPress_Player_Merge
@@ -117,18 +117,18 @@ try {
 }
 sp_assert( null !== $threw, 'lacking edit_sp_players refuses even a self-scoped list' );
 
-/* 4. --user targeting another user without delete_sp_players refuses via resolve_target_user(). */
+/* 4. --owner targeting another user without delete_sp_players refuses via resolve_target_user(). */
 sp_test_cli_reset();
 $GLOBALS['sp_denied_caps']         = array( 'delete_sp_players' );
 $GLOBALS['spm_cli_users']['id:42'] = 42;
 
 $threw = null;
 try {
-	( new SP_Merge_CLI_Backups() )->list( array(), array( 'user' => '42' ) );
+	( new SP_Merge_CLI_Backups() )->list( array(), array( 'owner' => '42' ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
-sp_assert( null !== $threw, '--user targeting another user without delete_sp_players refuses' );
+sp_assert( null !== $threw, '--owner targeting another user without delete_sp_players refuses' );
 sp_assert_contains( 'Administrator', $threw ? $threw->getMessage() : '', 'the refusal names the required tier' );
 
 /* 5. --status filters the (already fetched) rows client-side. */
@@ -181,7 +181,7 @@ sp_test_cli_reset();
 $GLOBALS['spm_cli_users']['id:42'] = 42;
 sp_test_seed_backup( 'merge_cross_user', sp_test_backup_payload( 30, 31 ), 'active', null, null, 42 );
 
-( new SP_Merge_CLI_Backups() )->delete( array( 'merge_cross_user' ), array( 'user' => '42', 'yes' => true ) );
+( new SP_Merge_CLI_Backups() )->delete( array( 'merge_cross_user' ), array( 'owner' => '42', 'yes' => true ) );
 
 sp_assert_contains( 'permanently removes the only recovery path', (string) sp_test_last_log( 'warning' ), 'the reminder about losing the recovery path is printed' );
 sp_assert_contains( '1 backup(s) deleted', (string) sp_test_last_log( 'success' ), 'the success message states the count deleted' );
@@ -196,11 +196,11 @@ sp_test_seed_backup( 'merge_owner_only', sp_test_backup_payload( 40, 41 ), 'acti
 $threw = null;
 try {
 	// Nonexistent target user id.
-	( new SP_Merge_CLI_Backups() )->delete( array( 'merge_owner_only' ), array( 'user' => 'ghost', 'yes' => true ) );
+	( new SP_Merge_CLI_Backups() )->delete( array( 'merge_owner_only' ), array( 'owner' => 'ghost', 'yes' => true ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
-sp_assert( null !== $threw, 'an unresolvable --user value refuses rather than silently falling back to the caller' );
+sp_assert( null !== $threw, 'an unresolvable --owner value refuses rather than silently falling back to the caller' );
 sp_assert_same( 1, count( $GLOBALS['wpdb']->backups ), 'nothing was deleted when the target user could not be resolved' );
 
 /* 10. Missing backup IDs refuses with a usage message. */
