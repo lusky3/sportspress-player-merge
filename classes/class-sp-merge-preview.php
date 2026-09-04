@@ -50,6 +50,105 @@ class SP_Merge_Preview {
 	}
 
 	/**
+	 * Generate the same comparison the HTML preview renders, as plain data.
+	 *
+	 * Built from the same private getters generate() uses, so a terminal preview
+	 * and a browser preview can never disagree about what a merge will do. No
+	 * escaping happens here — this is a data structure for a CLI or JSON consumer,
+	 * not markup, and it deliberately does not cap the array-field resolutions the
+	 * way the HTML table does: MAX_LISTED_RESOLUTIONS exists to keep a browser
+	 * table readable, and has nothing to say about a terminal or a JSON payload.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return array{
+	 *     primary: array{id: int, name: string},
+	 *     duplicates: array<array{id: int, name: string}>,
+	 *     current_team: array{primary: string|null, duplicates: string[], result: string[]},
+	 *     past_teams: array{primary: string[], duplicates: string[], result: string[]},
+	 *     taxonomies: array<string, array{label: string, primary: string[], duplicates: string[], result: string[]}>,
+	 *     events: array{primary: int, duplicates: int, result: int},
+	 *     collision_count: int,
+	 *     array_field_filled: array,
+	 *     array_field_conflicts: array
+	 * }
+	 */
+	public function generate_data( int $primary_id, array $duplicate_ids ): array {
+		$primary    = $this->get_player_details( $primary_id );
+		$duplicates = array_map( array( $this, 'get_player_details' ), $duplicate_ids );
+
+		$primary_team    = $this->get_current_team( $primary_id );
+		$duplicate_teams = array();
+		foreach ( $duplicate_ids as $dup_id ) {
+			$team = $this->get_current_team( (int) $dup_id );
+			if ( $team ) {
+				$duplicate_teams[] = $team;
+			}
+		}
+		$unique_dup_teams = array_values( array_unique( $duplicate_teams ) );
+		$all_teams        = $primary_team ? array_merge( array( $primary_team ), $unique_dup_teams ) : $unique_dup_teams;
+		$result_teams     = array_values( array_unique( $all_teams ) );
+
+		$primary_past       = $this->get_past_teams( $primary_id );
+		$all_duplicate_past = array();
+		foreach ( $duplicate_ids as $dup_id ) {
+			$all_duplicate_past = array_merge( $all_duplicate_past, $this->get_past_teams( (int) $dup_id ) );
+		}
+		$unique_dup_past = array_values( array_unique( $all_duplicate_past ) );
+		$merged_past     = array_values( array_unique( array_merge( $primary_past, $unique_dup_past ) ) );
+
+		$taxonomies = array();
+		foreach ( get_object_taxonomies( 'sp_player', 'objects' ) as $taxonomy ) {
+			$primary_terms       = $this->get_taxonomy_terms( $primary_id, $taxonomy->name );
+			$all_duplicate_terms = array();
+			foreach ( $duplicate_ids as $dup_id ) {
+				$all_duplicate_terms = array_merge( $all_duplicate_terms, $this->get_taxonomy_terms( (int) $dup_id, $taxonomy->name ) );
+			}
+			$unique_dup_terms = array_values( array_unique( $all_duplicate_terms ) );
+			$merged_terms     = array_values( array_unique( array_merge( $primary_terms, $unique_dup_terms ) ) );
+
+			$taxonomies[ $taxonomy->name ] = array(
+				'label'      => $taxonomy->labels->name,
+				'primary'    => $primary_terms,
+				'duplicates' => $unique_dup_terms,
+				'result'     => $merged_terms,
+			);
+		}
+
+		$primary_events   = $this->get_event_count_for_player( $primary_id );
+		$duplicate_events = 0;
+		foreach ( $duplicate_ids as $dup_id ) {
+			$duplicate_events += $this->get_event_count_for_player( (int) $dup_id );
+		}
+
+		$resolutions = $this->compute_array_field_resolutions( $primary_id, $duplicate_ids );
+
+		return array(
+			'primary'               => $primary,
+			'duplicates'            => $duplicates,
+			'current_team'          => array(
+				'primary'    => $primary_team,
+				'duplicates' => $unique_dup_teams,
+				'result'     => $result_teams,
+			),
+			'past_teams'            => array(
+				'primary'    => $primary_past,
+				'duplicates' => $unique_dup_past,
+				'result'     => $merged_past,
+			),
+			'taxonomies'            => $taxonomies,
+			'events'                => array(
+				'primary'    => $primary_events,
+				'duplicates' => $duplicate_events,
+				'result'     => $primary_events + $duplicate_events,
+			),
+			'collision_count'       => $this->count_collision_events( $primary_id, $duplicate_ids ),
+			'array_field_filled'    => $resolutions['filled'],
+			'array_field_conflicts' => $resolutions['conflicts'],
+		);
+	}
+
+	/**
 	 * Render the player names section.
 	 *
 	 * @param array   $primary    Primary player details.
@@ -118,13 +217,17 @@ class SP_Merge_Preview {
 	}
 
 	/**
-	 * Detect and warn about events where both primary and duplicate appear.
+	 * Count events where both the primary and a duplicate player appear.
+	 *
+	 * Shared by the HTML collision warning and generate_data(), so a terminal
+	 * preview and a browser preview can never disagree about how many events are
+	 * contested.
 	 *
 	 * @param int   $primary_id    Primary player ID.
 	 * @param int[] $duplicate_ids Duplicate player IDs.
-	 * @return string HTML warning row, or empty string.
+	 * @return int Number of events naming both the primary and a duplicate.
 	 */
-	private function render_collision_warning( int $primary_id, array $duplicate_ids ): string {
+	private function count_collision_events( int $primary_id, array $duplicate_ids ): int {
 		global $wpdb;
 
 		// Find events where primary player appears.
@@ -136,7 +239,7 @@ class SP_Merge_Preview {
 		);
 
 		if ( empty( $primary_events ) ) {
-			return '';
+			return 0;
 		}
 
 		$collision_count = 0;
@@ -149,6 +252,19 @@ class SP_Merge_Preview {
 			);
 			$collision_count += count( array_intersect( $primary_events, $dup_events ) );
 		}
+
+		return $collision_count;
+	}
+
+	/**
+	 * Detect and warn about events where both primary and duplicate appear.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return string HTML warning row, or empty string.
+	 */
+	private function render_collision_warning( int $primary_id, array $duplicate_ids ): string {
+		$collision_count = $this->count_collision_events( $primary_id, $duplicate_ids );
 
 		if ( 0 === $collision_count ) {
 			return '';
@@ -167,22 +283,22 @@ class SP_Merge_Preview {
 	}
 
 	/**
-	 * Warn about the cells the merge has to resolve in the serialized array fields.
+	 * Replay the serialized-array merge SP_Merge_Processor will perform, without
+	 * writing anything, and collect every cell-level decision it makes.
 	 *
-	 * The "Result After Merge" column reads as a clean union, which those fields
-	 * are not: they are merged cell by cell, so a season's statistic can only come
-	 * from one of the two players. This replays the real merge (SP_Merge_Processor
-	 * does the walking) and reports both directions — a value taken from the
-	 * duplicate because the primary's cell is blank, and a value discarded because
-	 * the primary's cell already held something different.
+	 * Shared by the HTML warning block and generate_data() so neither can ever
+	 * report a resolution the real merge would not also make.
 	 *
 	 * @param int   $primary_id    Primary player ID.
 	 * @param int[] $duplicate_ids Duplicate player IDs.
-	 * @return string HTML warning block, or empty string.
+	 * @return array{filled: array, conflicts: array}
 	 */
-	private function render_array_field_warning( int $primary_id, array $duplicate_ids ): string {
+	private function compute_array_field_resolutions( int $primary_id, array $duplicate_ids ): array {
 		if ( ! class_exists( 'SP_Merge_Processor' ) ) {
-			return '';
+			return array(
+				'filled'    => array(),
+				'conflicts' => array(),
+			);
 		}
 
 		$processor = new SP_Merge_Processor();
@@ -222,6 +338,31 @@ class SP_Merge_Preview {
 				}
 			}
 		}
+
+		return array(
+			'filled'    => $filled,
+			'conflicts' => $conflicts,
+		);
+	}
+
+	/**
+	 * Warn about the cells the merge has to resolve in the serialized array fields.
+	 *
+	 * The "Result After Merge" column reads as a clean union, which those fields
+	 * are not: they are merged cell by cell, so a season's statistic can only come
+	 * from one of the two players. This replays the real merge (SP_Merge_Processor
+	 * does the walking) and reports both directions — a value taken from the
+	 * duplicate because the primary's cell is blank, and a value discarded because
+	 * the primary's cell already held something different.
+	 *
+	 * @param int   $primary_id    Primary player ID.
+	 * @param int[] $duplicate_ids Duplicate player IDs.
+	 * @return string HTML warning block, or empty string.
+	 */
+	private function render_array_field_warning( int $primary_id, array $duplicate_ids ): string {
+		$resolutions = $this->compute_array_field_resolutions( $primary_id, $duplicate_ids );
+		$filled      = $resolutions['filled'];
+		$conflicts   = $resolutions['conflicts'];
 
 		if ( empty( $filled ) && empty( $conflicts ) ) {
 			return '';
@@ -393,6 +534,27 @@ class SP_Merge_Preview {
 	}
 
 	/**
+	 * Count the events a single player appears in.
+	 *
+	 * Shared by the HTML event-count row and generate_data(); called once per
+	 * player rather than batched, so a terminal preview reads the same total the
+	 * table already shows.
+	 *
+	 * @param int $player_id Player ID.
+	 * @return int Number of events the player appears in.
+	 */
+	private function get_event_count_for_player( int $player_id ): int {
+		global $wpdb;
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
+				(string) $player_id
+			)
+		);
+	}
+
+	/**
 	 * Render the event count row.
 	 *
 	 * @param int   $primary_id    Primary player ID.
@@ -400,24 +562,11 @@ class SP_Merge_Preview {
 	 * @return string HTML.
 	 */
 	private function render_event_count_row( int $primary_id, array $duplicate_ids ): string {
-		global $wpdb;
-
-		$primary_count = (int) $wpdb->get_var(
-			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value = %s",
-				(string) $primary_id
-			)
-		);
+		$primary_count = $this->get_event_count_for_player( $primary_id );
 
 		$dup_count = 0;
-		if ( ! empty( $duplicate_ids ) ) {
-			$placeholders = implode( ',', array_fill( 0, count( $duplicate_ids ), '%s' ) );
-			$dup_count    = (int) $wpdb->get_var(
-				$wpdb->prepare(
-					"SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = 'sp_player' AND meta_value IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-					array_map( 'strval', $duplicate_ids )
-				)
-			);
+		foreach ( $duplicate_ids as $dup_id ) {
+			$dup_count += $this->get_event_count_for_player( (int) $dup_id );
 		}
 
 		$none = esc_html__( 'None', 'sportspress-player-merge' );

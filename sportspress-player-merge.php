@@ -141,6 +141,11 @@ class SportsPress_Player_Merge_Init {
 		if ( class_exists( 'SP_Merge_Controller' ) ) {
 			$GLOBALS['sp_merge_controller'] = new SP_Merge_Controller();
 		}
+
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli.php';
+			WP_CLI::add_command( 'sp-merge', 'SP_Merge_CLI' );
+		}
 	}
 }
 
