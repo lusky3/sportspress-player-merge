@@ -179,12 +179,16 @@ class SP_Merge_Admin {
 	}
 
 	/**
-	 * Get recent backups for the current user.
+	 * Get recent backups, by default for the current user only.
 	 *
-	 * @param int $limit Maximum rows to return.
+	 * @param int      $limit     Maximum rows to return.
+	 * @param int|null $user_id   Owner to list backups for instead of the current user.
+	 *                            Ignored when $all_users is true.
+	 * @param bool     $all_users List backups for every owner (e.g. WP-CLI under
+	 *                            delete_sp_players), ignoring $user_id.
 	 * @return array[]|false Backups or false on error.
 	 */
-	public function get_recent_backups( int $limit = self::MAX_LISTED_BACKUPS ): array|false {
+	public function get_recent_backups( int $limit = self::MAX_LISTED_BACKUPS, ?int $user_id = null, bool $all_users = false ): array|false {
 		global $wpdb;
 
 		$table_name = $wpdb->prefix . 'sp_merge_backups';
@@ -204,6 +208,14 @@ class SP_Merge_Admin {
 		$status_sql = in_array( 'status', $columns, true ) ? "COALESCE(status, 'active')" : "'active'";
 		$limit      = max( 1, min( self::MAX_LISTED_BACKUPS, $limit ) );
 
+		// $all_users drops the owner filter entirely rather than parameterizing
+		// it away, so there is no user_id value — real or sentinel — that could
+		// be mistaken for "every owner".
+		$where_sql  = $all_users ? '' : 'WHERE user_id = %d';
+		$query_args = $all_users
+			? array( $limit )
+			: array( $user_id ?? get_current_user_id(), $limit );
+
 		$results = $wpdb->get_results(
 			$wpdb->prepare(
 				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -211,11 +223,10 @@ class SP_Merge_Admin {
 						JSON_EXTRACT(backup_data, '$.primary_name') as primary_name,
 						JSON_EXTRACT(backup_data, '$.duplicate_names') as duplicate_names
 				 FROM {$table_name}
-				 WHERE user_id = %d
+				 {$where_sql}
 				 ORDER BY created_at DESC
 				 LIMIT %d",
-				get_current_user_id(),
-				$limit
+				$query_args
 			)
 		);
 

@@ -184,17 +184,21 @@ class SP_Merge_Backup {
 	/**
 	 * Revert a merge from backup.
 	 *
-	 * @param string $backup_id Backup ID.
-	 * @param bool   $force     Proceed even when captured values changed after the merge.
+	 * @param string   $backup_id     Backup ID.
+	 * @param bool     $force         Proceed even when captured values changed after the merge.
+	 * @param int|null $owner_user_id Backup owner to revert on behalf of, for a caller (such as
+	 *                                WP-CLI, gated on delete_sp_players) acting on a backup it did
+	 *                                not create itself. Null keeps the prior behavior of scoping
+	 *                                to the current actor.
 	 * @return array{success: bool, code?: string, message?: string} On refusal, code is one of
 	 *               not_found, conflict, values_changed (the only forcible one) or error.
 	 */
-	public function revert( string $backup_id, bool $force = false ): array {
+	public function revert( string $backup_id, bool $force = false, ?int $owner_user_id = null ): array {
 		global $wpdb;
 
 		$this->maybe_upgrade_schema();
 
-		$row         = $this->load_backup_row( $backup_id );
+		$row         = $this->load_backup_row( $backup_id, $owner_user_id );
 		$backup_data = $row ? json_decode( (string) $row->backup_data, true ) : null;
 
 		if ( ! $row || ! is_array( $backup_data ) || empty( $backup_data['primary_id'] ) ) {
@@ -235,7 +239,7 @@ class SP_Merge_Backup {
 
 			$wpdb->query( 'COMMIT' );
 
-			$this->cleanup_after_revert( $backup_id );
+			$this->cleanup_after_revert( $backup_id, $owner_user_id );
 
 			return array( 'success' => true );
 
@@ -270,10 +274,14 @@ class SP_Merge_Backup {
 	/**
 	 * Delete multiple backups.
 	 *
-	 * @param string[] $backup_ids Backup IDs.
+	 * @param string[] $backup_ids    Backup IDs.
+	 * @param int|null $owner_user_id Backup owner to delete on behalf of, for a caller (such as
+	 *                                WP-CLI, gated on delete_sp_players) acting on backups it did
+	 *                                not create itself. Null keeps the prior behavior of scoping
+	 *                                to the current actor.
 	 * @return int Number deleted.
 	 */
-	public function delete_backups( array $backup_ids ): int {
+	public function delete_backups( array $backup_ids, ?int $owner_user_id = null ): int {
 		global $wpdb;
 
 		$this->maybe_upgrade_schema();
@@ -284,8 +292,10 @@ class SP_Merge_Backup {
 			return 0;
 		}
 
+		$user_id = $owner_user_id ?? get_current_user_id();
+
 		$placeholders = implode( ',', array_fill( 0, count( $backup_ids ), '%s' ) );
-		$query_args   = array_merge( $backup_ids, array( get_current_user_id() ) );
+		$query_args   = array_merge( $backup_ids, array( $user_id ) );
 		$result       = $wpdb->query(
 			$wpdb->prepare(
 				"DELETE FROM {$table_name} WHERE backup_id IN ({$placeholders}) AND user_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -294,9 +304,9 @@ class SP_Merge_Backup {
 		);
 
 		if ( false !== $result ) {
-			$last_backup_id = get_user_meta( get_current_user_id(), 'sp_last_merge_backup', true );
+			$last_backup_id = get_user_meta( $user_id, 'sp_last_merge_backup', true );
 			if ( in_array( $last_backup_id, $backup_ids, true ) ) {
-				delete_user_meta( get_current_user_id(), 'sp_last_merge_backup' );
+				delete_user_meta( $user_id, 'sp_last_merge_backup' );
 			}
 			return $result;
 		}
@@ -601,12 +611,18 @@ class SP_Merge_Backup {
 	}
 
 	/**
-	 * Load a backup row from the database, scoped to the current user.
+	 * Load a backup row from the database, scoped to a single owner.
 	 *
-	 * @param string $backup_id Backup ID.
+	 * Defaults to the current user. An explicit owner lets a caller holding
+	 * delete_sp_players (mark_active()/mark_failed() never pass one — a backup
+	 * is always promoted or flagged by whoever ran the merge) reach a backup
+	 * that belongs to a different user, e.g. WP-CLI reverting on their behalf.
+	 *
+	 * @param string   $backup_id     Backup ID.
+	 * @param int|null $owner_user_id Owner to scope the lookup to. Null uses the current user.
 	 * @return object|null Row or null.
 	 */
-	private function load_backup_row( string $backup_id ): ?object {
+	private function load_backup_row( string $backup_id, ?int $owner_user_id = null ): ?object {
 		global $wpdb;
 
 		if ( ! preg_match( '/^merge_\d+_[a-zA-Z0-9]{8}$/', $backup_id ) ) {
@@ -620,7 +636,7 @@ class SP_Merge_Backup {
 				"SELECT * FROM {$wpdb->prefix}sp_merge_backups
 				WHERE backup_id = %s AND user_id = %d
 				AND COALESCE(status, 'active') IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				array_merge( array( $backup_id, get_current_user_id() ), self::LOADABLE_STATUSES )
+				array_merge( array( $backup_id, $owner_user_id ?? get_current_user_id() ), self::LOADABLE_STATUSES )
 			)
 		);
 
@@ -628,12 +644,16 @@ class SP_Merge_Backup {
 	}
 
 	/**
-	 * Get the status of a backup owned by the current user.
+	 * Get the status of a backup owned by a single user.
 	 *
-	 * @param string $backup_id Backup ID.
+	 * Defaults to the current user, mirroring load_backup_row() so the two stay
+	 * consistent; mark_failed() (its only caller) never passes an explicit owner.
+	 *
+	 * @param string   $backup_id     Backup ID.
+	 * @param int|null $owner_user_id Owner to scope the lookup to. Null uses the current user.
 	 * @return string|null Status or null when no such backup exists.
 	 */
-	private function get_backup_status( string $backup_id ): ?string {
+	private function get_backup_status( string $backup_id, ?int $owner_user_id = null ): ?string {
 		global $wpdb;
 
 		if ( ! preg_match( '/^merge_\d+_[a-zA-Z0-9]{8}$/', $backup_id ) ) {
@@ -645,7 +665,7 @@ class SP_Merge_Backup {
 				"SELECT COALESCE(status, 'active') FROM {$wpdb->prefix}sp_merge_backups
 				WHERE backup_id = %s AND user_id = %d",
 				$backup_id,
-				get_current_user_id()
+				$owner_user_id ?? get_current_user_id()
 			)
 		);
 
@@ -1377,25 +1397,33 @@ class SP_Merge_Backup {
 	/**
 	 * Clean up after a successful revert.
 	 *
-	 * @param string $backup_id Backup ID.
+	 * Must be scoped to the same owner revert() loaded the row under, or a
+	 * cross-user revert would leave the source row stuck in its pre-revert
+	 * status and clear the wrong user's "last merge backup" pointer.
+	 *
+	 * @param string   $backup_id     Backup ID.
+	 * @param int|null $owner_user_id Backup owner, matching the one passed to revert(). Null
+	 *                                uses the current user.
 	 */
-	private function cleanup_after_revert( string $backup_id ): void {
+	private function cleanup_after_revert( string $backup_id, ?int $owner_user_id = null ): void {
 		global $wpdb;
+
+		$user_id = $owner_user_id ?? get_current_user_id();
 
 		$wpdb->update(
 			$wpdb->prefix . 'sp_merge_backups',
 			array( 'status' => 'reverted' ),
 			array(
 				'backup_id' => $backup_id,
-				'user_id'   => get_current_user_id(),
+				'user_id'   => $user_id,
 			),
 			array( '%s' ),
 			array( '%s', '%d' )
 		);
 
-		$last = get_user_meta( get_current_user_id(), 'sp_last_merge_backup', true );
+		$last = get_user_meta( $user_id, 'sp_last_merge_backup', true );
 		if ( $last === $backup_id ) {
-			delete_user_meta( get_current_user_id(), 'sp_last_merge_backup' );
+			delete_user_meta( $user_id, 'sp_last_merge_backup' );
 		}
 	}
 

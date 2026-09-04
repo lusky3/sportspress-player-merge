@@ -11,3 +11,6 @@ Tasks:
 4. merge/revert/backups list/backups delete commands — pending
 5. wp sp-merge batch — pending
 6. PHPStan wp-cli stubs support — pending
+
+Task 1: complete (commits adb5c5b..1dbbdb2, review clean)
+Task 2: complete (backup cross-user support; full suite green)

@@ -211,6 +211,10 @@ function get_the_title( $id ) {
 	return 'Player ' . $id;
 }
 
+function mysql2date( $format, $date ) {
+	return $date;
+}
+
 function wp_generate_password( $length = 12, $special = true ) {
 	return substr( str_repeat( 'a1b2c3d4', 4 ), 0, $length );
 }
@@ -410,6 +414,24 @@ class SP_Test_WPDB {
 			return $deleted;
 		}
 
+		// DELETE FROM wp_sp_merge_backups WHERE backup_id IN (...) AND user_id = %d.
+		if ( 0 === strpos( $sql, 'DELETE FROM wp_sp_merge_backups WHERE backup_id IN' ) ) {
+			$user_id    = (int) array_pop( $args );
+			$backup_ids = $args;
+			$before     = count( $this->backups );
+
+			$this->backups = array_values(
+				array_filter(
+					$this->backups,
+					static function ( $row ) use ( $backup_ids, $user_id ) {
+						return ! ( in_array( $row['backup_id'], $backup_ids, true ) && (int) $row['user_id'] === $user_id );
+					}
+				)
+			);
+
+			return $before - count( $this->backups );
+		}
+
 		if ( false !== strpos( $sql, 'DELETE FROM wp_sp_merge_backups' ) ) {
 			return 0;
 		}
@@ -486,6 +508,48 @@ class SP_Test_WPDB {
 
 	public function get_results( $query ) {
 		list( $sql, $args ) = $this->unpack( $query );
+
+		// SP_Merge_Admin::get_recent_backups() — WHERE user_id is present unless
+		// the caller asked for every owner.
+		if ( false !== strpos( $sql, 'SELECT backup_id, user_id, created_at,' ) ) {
+			if ( false !== strpos( $sql, 'WHERE user_id = %d' ) ) {
+				$user_id = (int) array_shift( $args );
+				$limit   = (int) array_shift( $args );
+			} else {
+				$user_id = null;
+				$limit   = (int) array_shift( $args );
+			}
+
+			$rows = array_filter(
+				$this->backups,
+				static function ( $row ) use ( $user_id ) {
+					return null === $user_id || (int) $row['user_id'] === $user_id;
+				}
+			);
+
+			usort(
+				$rows,
+				static function ( $a, $b ) {
+					return strcmp( (string) $b['created_at'], (string) $a['created_at'] );
+				}
+			);
+
+			$rows = array_slice( $rows, 0, $limit );
+
+			$out = array();
+			foreach ( $rows as $row ) {
+				$data = json_decode( (string) $row['backup_data'], true );
+				$out[] = (object) array(
+					'backup_id'       => $row['backup_id'],
+					'user_id'         => $row['user_id'],
+					'created_at'      => $row['created_at'],
+					'status'          => $row['status'] ?? 'active',
+					'primary_name'    => json_encode( $data['primary_name'] ?? null ),
+					'duplicate_names' => json_encode( $data['duplicate_names'] ?? array() ),
+				);
+			}
+			return $out;
+		}
 
 		if ( false !== strpos( $sql, 'SELECT id, backup_id, created_at, touched_posts' ) ) {
 			$out = array();
