@@ -20,7 +20,7 @@ jobs:
           php-version: '8.2'
           coverage: none
       - name: Install WordPress stubs
-        run: composer global require phpstan/phpstan szepeviktor/phpstan-wordpress php-stubs/wordpress-stubs --no-interaction
+        run: composer global require phpstan/phpstan szepeviktor/phpstan-wordpress php-stubs/wordpress-stubs php-stubs/wp-cli-stubs --no-interaction
       - name: Run PHPStan
         run: ~/.composer/vendor/bin/phpstan analyse --configuration=phpstan.neon --no-progress
 
