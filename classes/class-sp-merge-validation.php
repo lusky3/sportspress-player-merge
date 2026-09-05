@@ -162,59 +162,114 @@ class SP_Merge_Validation {
 	 *                                               each non-null certainty adjusted by the same signals.
 	 */
 	public static function apply_certainty_adjustments( array $group, array $members ): array {
-		$certainty = (int) ( $group['certainty'] ?? 0 );
+		$shared_email     = self::shared_email( $members );
+		$team_boost       = self::share_a_team( $members );
+		$position_penalty = self::positions_differ( $members );
 
-		// Boost certainty when players share the same email address. Only the
-		// members actually holding that address earn the per-member boost.
-		$emails       = array_filter( array_column( $members, 'email' ), 'strlen' );
-		$shared_email = '';
-		if ( count( $emails ) >= 2 && count( array_unique( $emails ) ) === 1 ) {
-			$shared_email = (string) reset( $emails );
-			$certainty    = min( 100, $certainty + self::EMAIL_BOOST );
-		}
+		// The group's own badge earns the email boost from the address being
+		// shared at all; a member earns it only by actually holding that address.
+		$certainty = self::adjust_score( (int) ( $group['certainty'] ?? 0 ), '' !== $shared_email, $team_boost, $position_penalty );
 
-		// Boost certainty when all players share the same team.
-		$team_boost = false;
-		$team_ids   = array_filter( array_column( $members, 'team_id' ) );
-		if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $members ) ) {
-			$team_boost = true;
-			$certainty  = min( 100, $certainty + self::TEAM_BOOST );
-		}
-
-		// Reduce certainty when players have different positions.
-		$position_penalty = false;
-		$all_positions    = array_filter( array_column( $members, 'position' ), 'strlen' );
-		if ( count( $all_positions ) >= 2 && count( array_unique( $all_positions ) ) > 1 ) {
-			$position_penalty = true;
-			$certainty        = max( self::POSITION_PENALTY_FLOOR, $certainty - self::POSITION_PENALTY );
-		}
-
-		// Apply the same signals to each member's own score so the per-member
-		// checkboxes (or CLI rows) and the group badge cannot tell different stories.
+		// The same three signals are applied to each member's own score so the
+		// per-member checkboxes (or CLI rows) and the group badge cannot tell
+		// different stories.
 		foreach ( $members as $index => $member ) {
 			if ( null === ( $member['certainty'] ?? null ) ) {
 				continue;
 			}
 
-			$score = (int) $member['certainty'];
-
-			if ( '' !== $shared_email && ( $member['email'] ?? '' ) === $shared_email ) {
-				$score = min( 100, $score + self::EMAIL_BOOST );
-			}
-			if ( $team_boost ) {
-				$score = min( 100, $score + self::TEAM_BOOST );
-			}
-			if ( $position_penalty ) {
-				$score = max( self::POSITION_PENALTY_FLOOR, $score - self::POSITION_PENALTY );
-			}
-
-			$members[ $index ]['certainty'] = $score;
+			$members[ $index ]['certainty'] = self::adjust_score(
+				(int) $member['certainty'],
+				'' !== $shared_email && ( $member['email'] ?? '' ) === $shared_email,
+				$team_boost,
+				$position_penalty
+			);
 		}
 
 		return array(
 			'certainty' => $certainty,
 			'members'   => $members,
 		);
+	}
+
+	/**
+	 * Move one score by whichever of the three signals apply to it.
+	 *
+	 * The order matters and is the order the signals are documented in: the
+	 * boosts are capped at 100 as they are added, and only then can the penalty
+	 * take the result down — so a penalised 100 lands on 80, not on the 100 a
+	 * cap applied last would have produced.
+	 *
+	 * @param int  $score            Score to adjust.
+	 * @param bool $email_boost      Whether the shared-email boost applies to this score.
+	 * @param bool $team_boost       Whether the shared-team boost applies.
+	 * @param bool $position_penalty Whether the differing-positions penalty applies.
+	 * @return int
+	 */
+	private static function adjust_score( int $score, bool $email_boost, bool $team_boost, bool $position_penalty ): int {
+		if ( $email_boost ) {
+			$score = min( 100, $score + self::EMAIL_BOOST );
+		}
+
+		if ( $team_boost ) {
+			$score = min( 100, $score + self::TEAM_BOOST );
+		}
+
+		if ( $position_penalty ) {
+			$score = max( self::POSITION_PENALTY_FLOOR, $score - self::POSITION_PENALTY );
+		}
+
+		return $score;
+	}
+
+	/**
+	 * The email address every member holding one holds, if they all hold the same.
+	 *
+	 * Needs at least two addresses to be worth anything: one member with an email
+	 * and one without says nothing about whether they are the same person.
+	 *
+	 * @param array $members Members as passed to apply_certainty_adjustments().
+	 * @return string The shared address, or '' when there is none.
+	 */
+	private static function shared_email( array $members ): string {
+		$emails = array_filter( array_column( $members, 'email' ), 'strlen' );
+
+		if ( count( $emails ) >= 2 && count( array_unique( $emails ) ) === 1 ) {
+			return (string) reset( $emails );
+		}
+
+		return '';
+	}
+
+	/**
+	 * Do all the members play for the same current team?
+	 *
+	 * Every member has to have one: a member with no current team is not
+	 * corroboration, so the count of teams found must match the member count.
+	 *
+	 * @param array $members Members as passed to apply_certainty_adjustments().
+	 * @return bool
+	 */
+	private static function share_a_team( array $members ): bool {
+		$team_ids = array_filter( array_column( $members, 'team_id' ) );
+
+		return ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $members );
+	}
+
+	/**
+	 * Are the members listed at more than one position?
+	 *
+	 * The strongest cheap signal that two same-named records are two different
+	 * people — and, like the email signal, it takes two stated positions to say
+	 * anything at all.
+	 *
+	 * @param array $members Members as passed to apply_certainty_adjustments().
+	 * @return bool
+	 */
+	private static function positions_differ( array $members ): bool {
+		$positions = array_filter( array_column( $members, 'position' ), 'strlen' );
+
+		return count( $positions ) >= 2 && count( array_unique( $positions ) ) > 1;
 	}
 
 	/**
