@@ -669,10 +669,52 @@ class SP_Test_WPDB {
 					}
 				}
 			} elseif ( false !== strpos( $sql, 'meta_value LIKE' ) ) {
-				$like = str_replace( array( '\\_', '%' ), array( '_', '' ), (string) $args[0] );
+				$needles = array_map(
+					static function ( $pattern ) {
+						return str_replace( array( '\\_', '%' ), array( '_', '' ), (string) $pattern );
+					},
+					$args
+				);
 				foreach ( $GLOBALS['sp_meta_rows'] as $row ) {
-					if ( false !== strpos( (string) $row['meta_value'], $like ) ) {
-						$out[] = (int) $row['post_id'];
+					foreach ( $needles as $needle ) {
+						if ( false !== strpos( (string) $row['meta_value'], $needle ) ) {
+							$out[] = (int) $row['post_id'];
+							break;
+						}
+					}
+				}
+			}
+
+			return array_values( array_unique( $out ) );
+		}
+
+		// backup_affected_list_meta()'s list discovery: exact sp_player match
+		// (first half of $args) OR'd with per-duplicate sp_players LIKE
+		// patterns (second half), restricted to sp_list posts.
+		if ( 0 === strpos( $sql, 'SELECT DISTINCT p.ID FROM' ) && false !== strpos( $sql, "p.post_type = 'sp_list'" ) ) {
+			$half          = (int) ( count( $args ) / 2 );
+			$exact_values  = array_slice( $args, 0, $half );
+			$like_patterns = array_slice( $args, $half );
+
+			$out = array();
+			foreach ( $GLOBALS['sp_meta_rows'] as $row ) {
+				$post = $GLOBALS['sp_posts'][ (int) $row['post_id'] ] ?? null;
+				if ( ! $post || 'sp_list' !== ( $post->post_type ?? '' ) ) {
+					continue;
+				}
+
+				if ( 'sp_player' === $row['meta_key'] && in_array( (string) $row['meta_value'], $exact_values, true ) ) {
+					$out[] = (int) $row['post_id'];
+					continue;
+				}
+
+				if ( 'sp_players' === $row['meta_key'] ) {
+					foreach ( $like_patterns as $pattern ) {
+						$needle = str_replace( array( '\\_', '%' ), array( '_', '' ), (string) $pattern );
+						if ( false !== strpos( (string) $row['meta_value'], $needle ) ) {
+							$out[] = (int) $row['post_id'];
+							break;
+						}
 					}
 				}
 			}
@@ -813,6 +855,26 @@ class SP_Test_WPDB {
 					&& in_array( (string) $row['meta_value'], $values, true ) ) {
 					$out[] = (object) array(
 						'meta_id'    => $meta_id,
+						'meta_value' => $row['meta_value'],
+					);
+				}
+			}
+			return $out;
+		}
+
+		// backup_affected_list_meta()'s per-list simple-meta capture:
+		// SELECT meta_id, meta_key, meta_value FROM wp_postmeta
+		// WHERE post_id = %d AND meta_key = 'sp_player'.
+		if ( false !== strpos( $sql, 'SELECT meta_id, meta_key, meta_value FROM wp_postmeta' )
+			&& false !== strpos( $sql, "meta_key = 'sp_player'" ) ) {
+			$post_id = (int) $args[0];
+
+			$out = array();
+			foreach ( $GLOBALS['sp_meta_rows'] as $meta_id => $row ) {
+				if ( (int) $row['post_id'] === $post_id && 'sp_player' === $row['meta_key'] ) {
+					$out[] = (object) array(
+						'meta_id'    => $meta_id,
+						'meta_key'   => $row['meta_key'],
 						'meta_value' => $row['meta_value'],
 					);
 				}

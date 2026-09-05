@@ -51,4 +51,32 @@ sp_assert(
 	'the captured serialized sp_players value is the original structure'
 );
 
+/*
+ * backup_affected_list_meta() discovers sp_list posts for every duplicate in
+ * one query (an exact sp_player IN(...) OR'd with per-duplicate sp_players
+ * LIKE patterns) rather than one leading-wildcard LIKE query per duplicate —
+ * confirm it still finds a list referencing EITHER duplicate, by either path.
+ */
+sp_test_reset();
+
+$GLOBALS['sp_posts'][601] = (object) array( 'ID' => 601, 'post_type' => 'sp_list' );
+$GLOBALS['sp_posts'][602] = (object) array( 'ID' => 602, 'post_type' => 'sp_list' );
+$GLOBALS['sp_posts'][603] = (object) array( 'ID' => 603, 'post_type' => 'sp_list' );
+// Control: an sp_event post referencing the same player ID must not surface
+// as a "list" — the query restricts to post_type = 'sp_list'.
+$GLOBALS['sp_posts'][604] = (object) array( 'ID' => 604, 'post_type' => 'sp_event' );
+
+sp_test_add_meta( 601, 'sp_player', '200' ); // exact match, first duplicate.
+sp_test_add_meta( 602, 'sp_players', array( 300, 400 ) ); // serialized match, second duplicate.
+sp_test_add_meta( 603, 'sp_player', '999' ); // unrelated player — must not be captured.
+sp_test_add_meta( 604, 'sp_player', '200' );
+
+$backup     = new SP_Merge_Backup();
+$list_affected = sp_test_invoke( $backup, 'backup_affected_list_meta', array( array( 200, 300 ) ) );
+
+sp_assert( isset( $list_affected[601] ), 'a list matching the first duplicate via exact sp_player is captured' );
+sp_assert( isset( $list_affected[602] ), 'a list matching the second duplicate via serialized sp_players is captured' );
+sp_assert( ! isset( $list_affected[603] ), 'a list referencing an unrelated player is not captured' );
+sp_assert( ! isset( $list_affected[604] ), 'an sp_event post is not mistaken for an sp_list' );
+
 sp_test_done();

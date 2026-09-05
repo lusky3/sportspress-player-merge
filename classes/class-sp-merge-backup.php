@@ -503,16 +503,23 @@ class SP_Merge_Backup {
 			)
 		);
 
+		// One query for every duplicate rather than one leading-wildcard LIKE
+		// query per duplicate — same reasoning as backup_affected_list_meta().
+		$like_clauses = array();
+		$like_args    = array();
 		foreach ( $str_ids as $str_id ) {
-			$serialized_ids = $wpdb->get_col(
-				$wpdb->prepare(
-					"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
-					WHERE meta_key IN ('sp_players', 'sp_timeline', 'sp_order', 'sp_stars') AND meta_value LIKE %s",
-					'%' . $wpdb->esc_like( $str_id ) . '%'
-				)
-			);
-			$event_ids = array_merge( $event_ids, $serialized_ids );
+			$like_clauses[] = 'meta_value LIKE %s';
+			$like_args[]    = '%' . $wpdb->esc_like( $str_id ) . '%';
 		}
+
+		$serialized_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
+				WHERE meta_key IN ('sp_players', 'sp_timeline', 'sp_order', 'sp_stars') AND (" . implode( ' OR ', $like_clauses ) . ')', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$like_args
+			)
+		);
+		$event_ids = array_merge( $event_ids, $serialized_ids );
 
 		$event_ids = array_values( array_unique( array_map( 'intval', $event_ids ) ) );
 
@@ -577,59 +584,72 @@ class SP_Merge_Backup {
 			return array();
 		}
 
+		/*
+		 * One query for every duplicate rather than one leading-wildcard LIKE
+		 * query per duplicate: LIKE '%id%' can't use an index, so on the
+		 * documented maximum of 10 duplicates the old per-duplicate loop ran
+		 * 10 full scans of postmeta — normally the largest table on the
+		 * install — before a single row of the merge itself had run.
+		 */
+		$str_ids            = array_map( 'strval', $duplicate_ids );
+		$exact_placeholders = implode( ',', array_fill( 0, count( $str_ids ), '%s' ) );
+
+		$like_clauses = array();
+		$like_args    = array();
+		foreach ( $str_ids as $str_id ) {
+			$like_clauses[] = 'pm.meta_value LIKE %s';
+			$like_args[]    = '%' . $wpdb->esc_like( $str_id ) . '%';
+		}
+
+		$list_ids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+				WHERE p.post_type = 'sp_list'
+				AND (
+					(pm.meta_key = 'sp_player' AND pm.meta_value IN ({$exact_placeholders}))
+					OR (pm.meta_key = 'sp_players' AND (" . implode( ' OR ', $like_clauses ) . '))
+				)', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				array_merge( $str_ids, $like_args )
+			)
+		);
+
 		$affected = array();
 
-		foreach ( $duplicate_ids as $dup_id ) {
-			$dup_str  = (string) $dup_id;
-			$list_ids = $wpdb->get_col(
+		foreach ( $list_ids as $list_id ) {
+			$list_id = (int) $list_id;
+			if ( isset( $affected[ $list_id ] ) ) {
+				continue;
+			}
+
+			$list_data = array();
+
+			// Backup sp_player simple meta rows.
+			$rows = $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT DISTINCT p.ID FROM {$wpdb->posts} p
-					INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
-					WHERE p.post_type = 'sp_list'
-					AND (
-						(pm.meta_key = 'sp_player' AND pm.meta_value = %s)
-						OR (pm.meta_key = 'sp_players' AND pm.meta_value LIKE %s)
-					)",
-					$dup_str,
-					'%' . $wpdb->esc_like( $dup_str ) . '%'
+					"SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta}
+					WHERE post_id = %d AND meta_key = 'sp_player'",
+					$list_id
 				)
 			);
-
-			foreach ( $list_ids as $list_id ) {
-				$list_id = (int) $list_id;
-				if ( isset( $affected[ $list_id ] ) ) {
-					continue;
+			if ( ! empty( $rows ) ) {
+				$list_data['_simple_sp_player'] = array();
+				foreach ( $rows as $row ) {
+					$list_data['_simple_sp_player'][] = array(
+						'meta_id'    => (int) $row->meta_id,
+						'meta_value' => $row->meta_value,
+					);
 				}
+			}
 
-				$list_data = array();
+			// Backup serialized sp_players.
+			$sp_players = get_post_meta( $list_id, 'sp_players', true );
+			if ( ! empty( $sp_players ) ) {
+				$list_data['sp_players'] = $sp_players;
+			}
 
-				// Backup sp_player simple meta rows.
-				$rows = $wpdb->get_results(
-					$wpdb->prepare(
-						"SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta}
-						WHERE post_id = %d AND meta_key = 'sp_player'",
-						$list_id
-					)
-				);
-				if ( ! empty( $rows ) ) {
-					$list_data['_simple_sp_player'] = array();
-					foreach ( $rows as $row ) {
-						$list_data['_simple_sp_player'][] = array(
-							'meta_id'    => (int) $row->meta_id,
-							'meta_value' => $row->meta_value,
-						);
-					}
-				}
-
-				// Backup serialized sp_players.
-				$sp_players = get_post_meta( $list_id, 'sp_players', true );
-				if ( ! empty( $sp_players ) ) {
-					$list_data['sp_players'] = $sp_players;
-				}
-
-				if ( ! empty( $list_data ) ) {
-					$affected[ $list_id ] = $list_data;
-				}
+			if ( ! empty( $list_data ) ) {
+				$affected[ $list_id ] = $list_data;
 			}
 		}
 
