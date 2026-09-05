@@ -6,6 +6,8 @@
  * @package SportsPress_Player_Merge
  */
 
+/* global SlimSelect */
+
 ( function( $ ) {
 	'use strict';
 
