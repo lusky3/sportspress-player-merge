@@ -91,6 +91,31 @@ function get_posts( $args = array() ) {
 	return array_slice( $roster, $offset, $limit );
 }
 
+/**
+ * No-op cache priming: the meta mocks answer from $GLOBALS['sp_meta_rows']
+ * directly, so there is no cache to warm. Needed because
+ * SP_Merge_Ajax::find_duplicates() primes both caches before reading.
+ *
+ * @param string $meta_type Object type.
+ * @param int[]  $object_ids Object IDs.
+ * @return bool
+ */
+function update_meta_cache( $meta_type, $object_ids ) {
+	return true;
+}
+
+/**
+ * Stand-in edit link, so the duplicate-scan payload can be built without a
+ * WordPress admin.
+ *
+ * @param int    $post_id Post ID.
+ * @param string $context Link context.
+ * @return string
+ */
+function get_edit_post_link( $post_id, $context = 'display' ) {
+	return 'https://example.test/wp-admin/post.php?post=' . (int) $post_id . '&action=edit';
+}
+
 function wp_count_posts( $post_type = 'post' ) {
 	$total = $GLOBALS['sp_scan_total'];
 
@@ -124,4 +149,5 @@ $sp_ajax_class_file = getenv( 'SP_MERGE_TEST_AJAX_CLASS' );
 if ( ! $sp_ajax_class_file ) {
 	$sp_ajax_class_file = dirname( __DIR__ ) . '/classes/class-sp-merge-ajax.php';
 }
+require_once dirname( __DIR__ ) . '/classes/class-sp-merge-validation.php';
 require_once $sp_ajax_class_file;

@@ -1,0 +1,14 @@
+{
+    "name": "lusky3/sportspress-player-merge",
+    "description": "Development-only tooling for the SportsPress Player Merge plugin. The plugin itself ships zero runtime dependencies; nothing here is installed by `composer install --no-dev`.",
+    "license": "GPL-2.0-or-later",
+    "require-dev": {
+        "phpunit/php-code-coverage": "^11.0"
+    },
+    "config": {
+        "platform": {
+            "php": "8.2.0"
+        },
+        "sort-packages": true
+    }
+}
