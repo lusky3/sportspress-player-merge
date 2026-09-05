@@ -125,7 +125,7 @@ class SP_Merge_CLI {
 			);
 		}
 
-		$scan   = ( new SP_Merge_Ajax() )->collect_scan_players();
+		$scan   = SP_Merge_Validation::collect_scan_players();
 		$groups = SP_Merge_Name_Matcher::find_groups( $scan['players'] );
 
 		$this->prime_scan_caches( $groups );
@@ -204,7 +204,7 @@ class SP_Merge_CLI {
 	 * printed above are then only the duplicates among the players that were
 	 * looked at, which is not what "no more duplicates" looks like.
 	 *
-	 * @param array $scan Return value of SP_Merge_Ajax::collect_scan_players().
+	 * @param array $scan Return value of SP_Merge_Validation::collect_scan_players().
 	 */
 	private function report_scan_coverage( array $scan ): void {
 		if ( $scan['truncated'] ) {

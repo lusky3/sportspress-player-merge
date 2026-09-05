@@ -19,6 +19,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SP_Merge_Validation {
 
 	/**
+	 * Hard ceiling on the number of players a single scan will load.
+	 */
+	private const MAX_SCAN_PLAYERS = 10000;
+
+	/**
+	 * Players fetched per scan page.
+	 */
+	private const SCAN_PAGE_SIZE = 500;
+
+	/**
 	 * A duplicate carrying at least this multiple of the primary's event count
 	 * makes the survivor choice worth questioning.
 	 */
@@ -106,6 +116,99 @@ class SP_Merge_Validation {
 	}
 
 	/**
+	 * Load every published player the duplicate scan should consider.
+	 *
+	 * Paged rather than a single capped query: `posts_per_page => 2000` with the
+	 * default newest-first ordering silently dropped the oldest records on a
+	 * roster larger than the cap, and those long-history records are exactly the
+	 * ones most likely to be the correct survivor. Ordering by ID ascending also
+	 * keeps the paging stable across batches.
+	 *
+	 * Shared by SP_Merge_Ajax::find_duplicates() and `wp sp-merge scan` so both
+	 * entry points scan the same roster the same way — the CLI command no
+	 * longer has to instantiate the AJAX transport class just to reach this.
+	 *
+	 * @return array{players: array, scanned: int, total: int, truncated: bool}
+	 */
+	public static function collect_scan_players(): array {
+		$players = array();
+		$loaded  = 0;
+
+		while ( $loaded < self::MAX_SCAN_PLAYERS ) {
+			$batch = get_posts(
+				array(
+					'post_type'      => 'sp_player',
+					'posts_per_page' => self::SCAN_PAGE_SIZE,
+					'offset'         => $loaded,
+					'no_found_rows'  => true,
+					'post_status'    => 'publish',
+					'orderby'        => 'ID',
+					'order'          => 'ASC',
+				)
+			);
+
+			$batch_size = count( $batch );
+			if ( 0 === $batch_size ) {
+				break;
+			}
+
+			$players = array_merge( $players, $batch );
+			$loaded += $batch_size;
+
+			if ( $batch_size < self::SCAN_PAGE_SIZE ) {
+				break;
+			}
+		}
+
+		$players = array_slice( $players, 0, self::MAX_SCAN_PLAYERS );
+		$scanned = count( $players );
+
+		$counts = wp_count_posts( 'sp_player' );
+		$total  = isset( $counts->publish ) ? (int) $counts->publish : $scanned;
+		$total  = max( $total, $scanned );
+
+		return array(
+			'players'   => $players,
+			'scanned'   => $scanned,
+			'total'     => $total,
+			'truncated' => $scanned < $total,
+		);
+	}
+
+	/**
+	 * Resolve a player's current team.
+	 *
+	 * Walks sp_current_team in reverse — SportsPress appends new assignments,
+	 * so the most recent one is the last entry — skipping the reserved "0"
+	 * team-totals sentinel until a value resolves to a live sp_team post.
+	 *
+	 * Shared by certainty_signals(), SP_Merge_Ajax's player search and
+	 * SP_Merge_Preview's team-name lookup: three copies of this same walk had
+	 * already diverged (only the preview copy guarded against a non-numeric
+	 * sp_current_team value before casting it).
+	 *
+	 * @param int $player_id Player ID.
+	 * @return array{id: int, name: string}|null Team id/name, or null when the player has no current team.
+	 */
+	public static function current_team( int $player_id ): ?array {
+		$team_ids = (array) get_post_meta( $player_id, 'sp_current_team' );
+
+		foreach ( array_reverse( $team_ids ) as $team_id ) {
+			if ( $team_id && '0' !== $team_id && is_numeric( $team_id ) ) {
+				$team_post = get_post( (int) $team_id );
+				if ( $team_post && 'sp_team' === $team_post->post_type ) {
+					return array(
+						'id'   => (int) $team_post->ID,
+						'name' => $team_post->post_title,
+					);
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * Read the signals a group's certainty is adjusted by, for one player.
 	 *
 	 * Shared by the AJAX duplicate scan and `wp sp-merge scan` so the score the
@@ -116,27 +219,14 @@ class SP_Merge_Validation {
 	 * @return array{team: string, team_id: int, position: string, email: string}
 	 */
 	public static function certainty_signals( int $player_id ): array {
-		$team    = '';
-		$team_id = 0;
-
-		$team_ids = (array) get_post_meta( $player_id, 'sp_current_team' );
-		foreach ( array_reverse( $team_ids ) as $tid ) {
-			if ( $tid && '0' !== $tid ) {
-				$team_post = get_post( (int) $tid );
-				if ( $team_post && 'sp_team' === $team_post->post_type ) {
-					$team    = $team_post->post_title;
-					$team_id = (int) $team_post->ID;
-					break;
-				}
-			}
-		}
+		$current_team = self::current_team( $player_id );
 
 		$positions = wp_get_post_terms( $player_id, 'sp_position', array( 'fields' => 'names' ) );
 		$position  = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
 
 		return array(
-			'team'     => $team,
-			'team_id'  => $team_id,
+			'team'     => $current_team['name'] ?? '',
+			'team_id'  => $current_team['id'] ?? 0,
 			'position' => $position,
 			'email'    => get_post_meta( $player_id, 'spt_email', true ) ?: '',
 		);

@@ -597,19 +597,7 @@ class SP_Merge_Preview {
 	 * @return string|null Team name or null.
 	 */
 	private function get_current_team( int $player_id ): ?string {
-		$team_ids = get_post_meta( $player_id, 'sp_current_team' );
-		$team_ids = array_reverse( $team_ids );
-
-		foreach ( $team_ids as $team_id ) {
-			if ( $team_id && '0' !== $team_id && is_numeric( $team_id ) ) {
-				$team = get_post( (int) $team_id );
-				if ( $team && 'sp_team' === $team->post_type ) {
-					return $team->post_title;
-				}
-			}
-		}
-
-		return null;
+		return SP_Merge_Validation::current_team( $player_id )['name'] ?? null;
 	}
 
 	/**
