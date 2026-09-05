@@ -51,3 +51,12 @@ dist/
 .playwright-mcp/
 .kiro/
 .superpowers/
+
+# Local agent state and audit deliverables. Audit reports are handed over at
+# the repo root and read there; they are a snapshot of one run, not something
+# the repository should carry forward. Matches the rules in
+# SportsPress-Admin-Tools.
+.claude
+.codegraph
+AUDIT-REPORT*.md
+BRAINSTORM-REPORT.md
