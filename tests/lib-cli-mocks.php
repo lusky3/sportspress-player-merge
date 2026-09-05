@@ -462,9 +462,11 @@ namespace {
 	}
 
 	// Loaded in production dependency order: SP_Merge_Preview calls into
-	// SP_Merge_Processor, and SP_Merge_CLI/SP_Merge_CLI_Backups call into all of
-	// these plus SP_Merge_Ajax/SP_Merge_Validation/SP_Merge_Backup (already
-	// required by lib-ajax-mocks.php -> lib-backup-mocks.php) and SP_Merge_Admin.
+	// SP_Merge_Processor, and SP_Merge_CLI/SP_Merge_CLI_Backups/SP_Merge_CLI_Batch
+	// call into all of these plus SP_Merge_Ajax/SP_Merge_Validation/
+	// SP_Merge_Backup (already required by lib-ajax-mocks.php ->
+	// lib-backup-mocks.php) and SP_Merge_Admin. SP_Merge_CLI_Batch comes last: it
+	// runs every row through SP_Merge_CLI::run_one_merge().
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-lock.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-name-matcher.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-processor.php';
@@ -472,6 +474,7 @@ namespace {
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-admin.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli-backups.php';
+	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli-batch.php';
 }
 
 namespace WP_CLI\Utils {

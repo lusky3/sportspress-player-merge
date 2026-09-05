@@ -146,24 +146,33 @@ class SportsPress_Player_Merge_Init {
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli.php';
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-backups.php';
+			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-batch.php';
 
 			/*
-			 * Two class registrations, each at its own namespace: WP-CLI maps
+			 * Three class registrations, each at its own namespace: WP-CLI maps
 			 * every public method of a registered class to its own hyphenated
 			 * leaf subcommand under that class's namespace. SP_Merge_CLI is
 			 * registered at the bare `sp-merge` namespace (scan, preview, merge,
-			 * revert, batch); SP_Merge_CLI_Backups is registered one level
-			 * deeper, at `sp-merge backups`, so its `list()`/`delete()` methods
-			 * become `wp sp-merge backups list` / `wp sp-merge backups delete`.
+			 * revert); SP_Merge_CLI_Backups is registered one level deeper, at
+			 * `sp-merge backups`, so its `list()`/`delete()` methods become
+			 * `wp sp-merge backups list` / `wp sp-merge backups delete`.
 			 * Registering backup methods on SP_Merge_CLI as well (as this file
 			 * once did, alongside two explicit `sp-merge backups <verb>`
 			 * registrations) would have given WP-CLI's own method-name mapping a
 			 * second, redundant spelling for the same destructive operation —
 			 * `wp sp-merge backups-list` next to the intended `sp-merge backups
 			 * list` — which is why the methods live on a separate class instead.
+			 *
+			 * SP_Merge_CLI_Batch is registered at the full command path it
+			 * implements, `sp-merge batch`, because it implements exactly one
+			 * command: WP-CLI registers a class carrying an `__invoke()` method
+			 * as that single leaf rather than enumerating its methods, so no
+			 * method name is appended to the path and no private helper of that
+			 * class can leak out as a subcommand.
 			 */
 			WP_CLI::add_command( 'sp-merge', 'SP_Merge_CLI' );
 			WP_CLI::add_command( 'sp-merge backups', 'SP_Merge_CLI_Backups' );
+			WP_CLI::add_command( 'sp-merge batch', 'SP_Merge_CLI_Batch' );
 		}
 	}
 }

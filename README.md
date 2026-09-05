@@ -105,8 +105,9 @@ sportspress-player-merge/
 │   ├── class-sp-merge-ajax.php           # AJAX handlers
 │   ├── class-sp-merge-backup.php         # Backup/restore system
 │   ├── class-sp-merge-controller.php     # Component coordinator
-│   ├── class-sp-merge-cli.php            # wp sp-merge scan/preview/merge/revert/batch
+│   ├── class-sp-merge-cli.php            # wp sp-merge scan/preview/merge/revert
 │   ├── class-sp-merge-cli-backups.php    # wp sp-merge backups list/delete
+│   ├── class-sp-merge-cli-batch.php      # wp sp-merge batch
 │   ├── class-sp-merge-github-updater.php # Auto-update from GitHub releases
 │   ├── class-sp-merge-lock.php           # The one lock a merge or revert holds
 │   ├── class-sp-merge-name-matcher.php   # Fuzzy matching engine (14 scenarios)

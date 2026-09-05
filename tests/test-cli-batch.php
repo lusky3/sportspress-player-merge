@@ -1,10 +1,15 @@
 <?php
 /**
  * `wp sp-merge batch` must run the exact same validate/preview/warning/confirm/
- * execute sequence `merge()` runs — via the shared `run_one_merge()` — once per
- * row of a CSV or JSON file, in file order, logging one JSON-Lines record per
- * row to `--log` immediately (not buffered), and only ever proceed past a
- * failed row when `--continue-on-error` was given.
+ * execute sequence `merge()` runs — via the shared
+ * `SP_Merge_CLI::run_one_merge()` — once per row of a CSV or JSON file, in file
+ * order, logging one JSON-Lines record per row to `--log` immediately (not
+ * buffered), and only ever proceed past a failed row when
+ * `--continue-on-error` was given.
+ *
+ * The command is SP_Merge_CLI_Batch, whose `__invoke()` is the whole subcommand
+ * (see classes/class-sp-merge-cli-batch.php), so every scenario below runs it
+ * the way WP-CLI does: by invoking the object.
  *
  * Every row here is built with `skip-preview` + `yes` in $assoc_args (the same
  * convention test-cli-merge.php uses) so scenarios stay focused on batch's own
@@ -127,7 +132,7 @@ sp_test_batch_seed_players();
 $csv_path = sp_test_batch_write_file( SP_TEST_BATCH_CSV_CLEAN, 'csv' );
 $log_path = sp_test_batch_log_path();
 
-( new SP_Merge_CLI() )->batch(
+( new SP_Merge_CLI_Batch() )(
 	array( $csv_path ),
 	array(
 		'skip-preview' => true,
@@ -162,7 +167,7 @@ $log_path = sp_test_batch_log_path();
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $csv_path ),
 		array(
 			'skip-preview' => true,
@@ -202,7 +207,7 @@ $log_path = sp_test_batch_log_path();
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $csv_path ),
 		array(
 			'skip-preview'       => true,
@@ -243,7 +248,7 @@ sp_test_batch_seed_players();
 $csv_path = sp_test_batch_write_file( SP_TEST_BATCH_CSV_CLEAN, 'csv' );
 $log_path = sp_test_batch_log_path();
 
-( new SP_Merge_CLI() )->batch(
+( new SP_Merge_CLI_Batch() )(
 	array( $csv_path ),
 	array(
 		'skip-preview' => true,
@@ -278,7 +283,7 @@ $log_path = sp_test_batch_log_path();
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $csv_path ),
 		array(
 			'skip-preview' => true,
@@ -311,7 +316,7 @@ $csv_path = sp_test_batch_write_file( SP_TEST_BATCH_CSV_CLEAN, 'csv' );
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch( array( $csv_path ), array( 'skip-preview' => true, 'yes' => true ) );
+	( new SP_Merge_CLI_Batch() )( array( $csv_path ), array( 'skip-preview' => true, 'yes' => true ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
@@ -337,7 +342,7 @@ $log_path = sp_test_batch_log_path();
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $txt_path ),
 		array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path )
 	);
@@ -346,7 +351,7 @@ try {
 }
 sp_assert( null !== $threw, 'an unrecognized extension without --input-format refuses the batch' );
 
-( new SP_Merge_CLI() )->batch(
+( new SP_Merge_CLI_Batch() )(
 	array( $txt_path ),
 	array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path, 'input-format' => 'csv' )
 );
@@ -379,7 +384,7 @@ $json_path = sp_test_batch_write_file(
 );
 $log_path = sp_test_batch_log_path();
 
-( new SP_Merge_CLI() )->batch(
+( new SP_Merge_CLI_Batch() )(
 	array( $json_path ),
 	array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path )
 );
@@ -399,7 +404,7 @@ unlink( $log_path );
  *    batch run.
  * ---------------------------------------------------------------------- */
 
-$cli    = new SP_Merge_CLI();
+$cli    = new SP_Merge_CLI_Batch();
 $parsed = sp_test_invoke( $cli, 'parse_batch_csv', array( "101,205;309\n" ) );
 sp_assert(
 	array( array( 'primary_id' => 101, 'duplicate_ids' => array( 205, 309 ) ) ) === $parsed,
@@ -425,7 +430,7 @@ sp_assert(
  *    same way. Both are row failures now.
  * ---------------------------------------------------------------------- */
 
-$cli = new SP_Merge_CLI();
+$cli = new SP_Merge_CLI_Batch();
 
 $parsed = sp_test_invoke( $cli, 'parse_batch_csv', array( "101,205,309\n" ) );
 sp_assert( isset( $parsed[0]['_parse_error'] ), 'a comma-separated duplicate list is refused, not silently truncated' );
@@ -483,7 +488,7 @@ $log_path = sp_test_batch_log_path();
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $csv_path ),
 		array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path )
 	);
@@ -516,7 +521,7 @@ $log_path = sp_test_batch_log_path();
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch( array( $csv_path ), array( 'skip-preview' => true, 'log' => $log_path ) );
+	( new SP_Merge_CLI_Batch() )( array( $csv_path ), array( 'skip-preview' => true, 'log' => $log_path ) );
 } catch ( SP_Test_CLI_Error $e ) {
 	$threw = $e;
 }
@@ -542,7 +547,7 @@ $log_path = sp_test_batch_log_path();
 foreach ( array( 'https://example.test/merges.csv', 'php://input', sys_get_temp_dir() . '/sp-merge-does-not-exist.csv' ) as $bad_path ) {
 	$threw = null;
 	try {
-		( new SP_Merge_CLI() )->batch(
+		( new SP_Merge_CLI_Batch() )(
 			array( $bad_path ),
 			array( 'skip-preview' => true, 'yes' => true, 'log' => $log_path, 'input-format' => 'csv' )
 		);
@@ -559,7 +564,7 @@ $csv_path = sp_test_batch_write_file( SP_TEST_BATCH_CSV_CLEAN, 'csv' );
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $csv_path ),
 		array( 'skip-preview' => true, 'yes' => true, 'log' => sys_get_temp_dir() . '/sp-merge-no-such-dir/batch.log' )
 	);
@@ -598,7 +603,7 @@ $log_path = sp_test_batch_log_path();
 $threw = null;
 try {
 	// Deliberately no --skip-preview: the preview walk is the hazard.
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $csv_path ),
 		array( 'yes' => true, 'continue-on-error' => true, 'log' => $log_path )
 	);
@@ -643,7 +648,7 @@ $log_path = sp_test_batch_log_path();
 
 $threw = null;
 try {
-	( new SP_Merge_CLI() )->batch(
+	( new SP_Merge_CLI_Batch() )(
 		array( $csv_path ),
 		array( 'skip-preview' => true, 'yes' => true, 'continue-on-error' => true, 'log' => $log_path )
 	);
@@ -673,7 +678,7 @@ $log_path = sp_test_batch_log_path();
 $handle   = fopen( $log_path, 'a' );
 
 sp_test_invoke(
-	new SP_Merge_CLI(),
+	new SP_Merge_CLI_Batch(),
 	'write_log_row',
 	array(
 		$handle,
@@ -721,7 +726,7 @@ for ( $i = 0; $i < 101; $i++ ) {
 $csv_path = sp_test_batch_write_file( $rows_csv, 'csv' );
 $log_path = sp_test_batch_log_path();
 
-( new SP_Merge_CLI() )->batch(
+( new SP_Merge_CLI_Batch() )(
 	array( $csv_path ),
 	array(
 		'skip-preview' => true,
