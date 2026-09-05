@@ -735,24 +735,6 @@ class SP_Merge_Backup {
 	}
 
 	/**
-	 * Load backup data from database.
-	 *
-	 * @param string $backup_id Backup ID.
-	 * @return array|null Backup data or null.
-	 */
-	private function load_backup_data( string $backup_id ): ?array {
-		$row = $this->load_backup_row( $backup_id );
-
-		if ( ! $row ) {
-			return null;
-		}
-
-		$data = json_decode( (string) $row->backup_data, true );
-
-		return is_array( $data ) ? $data : null;
-	}
-
-	/**
 	 * Collect every post ID a revert of this backup would rewrite.
 	 *
 	 * @param array $backup_data Backup data.

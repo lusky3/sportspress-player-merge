@@ -117,24 +117,6 @@ class SP_Merge_Name_Matcher {
 	);
 
 	/**
-	 * French compound first names (#14).
-	 *
-	 * @var string[]
-	 */
-	private static array $french_compounds = array(
-		'jean-pierre', 'jean-paul', 'jean-marc', 'jean-francois', 'jean-louis',
-		'jean-claude', 'jean-michel', 'jean-philippe', 'jean-sebastien', 'jean-christophe',
-		'jean-luc', 'jean-guy', 'jean-yves', 'jean-rene', 'jean-daniel',
-		'jean-simon', 'jean-benoit', 'jean-nicolas', 'jean-gabriel', 'jean-denis',
-		'pierre-luc', 'pierre-olivier', 'pierre-alexandre', 'pierre-marc',
-		'marc-andre', 'marc-antoine', 'marc-olivier',
-		'louis-philippe', 'louis-charles',
-		'marie-eve', 'marie-claude', 'marie-pier', 'marie-helene', 'marie-josee',
-		'marie-france', 'marie-andree', 'marie-christine', 'marie-pierre',
-		'anne-marie', 'anne-sophie',
-	);
-
-	/**
 	 * Suffix patterns to strip (#7).
 	 *
 	 * @var string
@@ -352,17 +334,6 @@ class SP_Merge_Name_Matcher {
 			return true;
 		}
 		return self::get_nickname_canonical( $a ) === self::get_nickname_canonical( $b );
-	}
-
-	/**
-	 * Check if a name is a French compound first name (#14).
-	 *
-	 * @param string $name Lowercase name (may contain hyphen or space).
-	 * @return bool
-	 */
-	private static function is_french_compound( string $name ): bool {
-		$normalized = str_replace( ' ', '-', $name );
-		return in_array( $normalized, self::$french_compounds, true );
 	}
 
 	/**

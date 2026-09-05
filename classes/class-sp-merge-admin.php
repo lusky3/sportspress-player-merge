@@ -140,42 +140,13 @@ class SP_Merge_Admin {
 
 		$template_path = SP_MERGE_PLUGIN_PATH . 'includes/admin-page.php';
 		if ( file_exists( $template_path ) ) {
-			include_once $template_path;
+			// Not include_once: this page can legitimately render more than
+			// once in a request (e.g. via do_action() called twice), and
+			// _once would silently emit nothing the second time.
+			include $template_path;
 		} else {
 			wp_die( esc_html__( 'Error: Admin page template not found.', 'sportspress-player-merge' ) );
 		}
-	}
-
-	/**
-	 * Get all published players, capped for performance.
-	 *
-	 * @return array[] Array of player data arrays.
-	 */
-	public function get_all_players(): array {
-		$player_posts = get_posts(
-			array(
-				'post_type'      => 'sp_player',
-				'posts_per_page' => 500,
-				'no_found_rows'  => true,
-				'post_status'    => 'publish',
-				'orderby'        => 'title',
-				'order'          => 'ASC',
-			)
-		);
-
-		if ( empty( $player_posts ) ) {
-			return array();
-		}
-
-		return array_map(
-			static function ( $player ) {
-				return array(
-					'id'   => $player->ID,
-					'name' => $player->post_title . ' (ID: ' . $player->ID . ')',
-				);
-			},
-			$player_posts
-		);
 	}
 
 	/**

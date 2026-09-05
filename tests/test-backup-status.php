@@ -11,6 +11,24 @@ require_once __DIR__ . '/lib-backup-mocks.php';
 
 echo "Backup status lifecycle\n";
 
+/**
+ * Load and decode a backup row exactly as production code does: through
+ * load_backup_row() (the real entry point mark_active()/revert()/etc. use),
+ * then json_decode() the payload the same way the row is actually consumed.
+ *
+ * @param SP_Merge_Backup $backup    Backup instance.
+ * @param string          $backup_id Backup ID.
+ * @return array|null Decoded backup data, or null when the row is not loadable.
+ */
+function sp_test_load_backup_data( SP_Merge_Backup $backup, string $backup_id ): ?array {
+	$row = sp_test_invoke( $backup, 'load_backup_row', array( $backup_id ) );
+	if ( ! $row ) {
+		return null;
+	}
+	$data = json_decode( (string) $row->backup_data, true );
+	return is_array( $data ) ? $data : null;
+}
+
 $payload = array(
 	'primary_id'        => 42,
 	'duplicate_ids'     => array( 43 ),
@@ -27,7 +45,7 @@ sp_test_reset();
 sp_test_seed_backup( 'merge_1700000001_aaaaaaaa', $payload, 'pending', array( 42, 43 ) );
 
 sp_assert(
-	is_array( sp_test_invoke( $backup, 'load_backup_data', array( 'merge_1700000001_aaaaaaaa' ) ) ),
+	is_array( sp_test_load_backup_data( $backup, 'merge_1700000001_aaaaaaaa' ) ),
 	'pending backup is loadable'
 );
 sp_assert_same( true, $backup->mark_active( 'merge_1700000001_aaaaaaaa' ), 'mark_active() promotes a pending backup' );
@@ -41,7 +59,7 @@ sp_test_seed_backup( 'merge_1700000002_bbbbbbbb', $payload, 'pending', array( 42
 sp_assert_same( true, $backup->mark_failed( 'merge_1700000002_bbbbbbbb' ), 'mark_failed() flags the backup' );
 sp_assert_same( 'failed', $GLOBALS['wpdb']->backups[0]['status'], 'status is failed' );
 sp_assert(
-	is_array( sp_test_invoke( $backup, 'load_backup_data', array( 'merge_1700000002_bbbbbbbb' ) ) ),
+	is_array( sp_test_load_backup_data( $backup, 'merge_1700000002_bbbbbbbb' ) ),
 	'a failed backup is still loadable'
 );
 
@@ -53,7 +71,7 @@ $GLOBALS['sp_user_meta']['sp_last_merge_backup'] = 'merge_1700000003_cccccccc';
 $backup->delete_backup( 'merge_1700000003_cccccccc' );
 
 sp_assert(
-	is_array( sp_test_invoke( $backup, 'load_backup_data', array( 'merge_1700000003_cccccccc' ) ) ),
+	is_array( sp_test_load_backup_data( $backup, 'merge_1700000003_cccccccc' ) ),
 	'delete_backup() (called when a merge throws) leaves the backup loadable'
 );
 sp_assert_same( 'failed', $GLOBALS['wpdb']->backups[0]['status'], 'delete_backup() records failed, not reverted' );
@@ -69,7 +87,7 @@ sp_test_seed_backup( 'merge_1700000004_dddddddd', $payload, 'reverted', array( 4
 
 sp_assert_same(
 	null,
-	sp_test_invoke( $backup, 'load_backup_data', array( 'merge_1700000004_dddddddd' ) ),
+	sp_test_load_backup_data( $backup, 'merge_1700000004_dddddddd' ),
 	'a reverted backup is not loadable'
 );
 sp_assert_same( false, $backup->mark_failed( 'merge_1700000004_dddddddd' ), 'mark_failed() will not resurrect a reverted backup' );
@@ -80,12 +98,12 @@ sp_test_seed_backup( 'merge_1700000005_eeeeeeee', $payload, 'active', array( 42 
 
 sp_assert_same(
 	null,
-	sp_test_invoke( $backup, 'load_backup_data', array( 'merge_1700000005_eeeeeeee' ) ),
+	sp_test_load_backup_data( $backup, 'merge_1700000005_eeeeeeee' ),
 	'another user\'s backup is not loadable'
 );
 sp_assert_same(
 	null,
-	sp_test_invoke( $backup, 'load_backup_data', array( "merge_1' OR 1=1 --" ) ),
+	sp_test_load_backup_data( $backup, "merge_1' OR 1=1 --" ),
 	'a malformed backup ID is rejected'
 );
 

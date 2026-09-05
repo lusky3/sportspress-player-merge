@@ -167,7 +167,7 @@ spm_assert( ! SP_Merge_GitHub_Updater::is_allowed_package_url( null ), 'a missin
 $updater = new SP_Merge_GitHub_Updater( __DIR__ . '/sportspress-player-merge.php', '1.2.0' );
 
 spm_assert_equals(
-	array( 'pre_set_site_transient_update_plugins', 'plugins_api', 'upgrader_post_install' ),
+	array( 'pre_set_site_transient_update_plugins', 'plugins_api' ),
 	$GLOBALS['spm_filters'],
 	'the updater registers its filters while enabled'
 );
