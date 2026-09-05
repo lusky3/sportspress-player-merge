@@ -137,6 +137,47 @@ function absint( $maybeint ) {
 	return abs( (int) $maybeint );
 }
 
+/**
+ * Recursively addslashes()/stripslashes() a value, mirroring
+ * wp-includes/formatting.php's addslashes_deep()/stripslashes_deep().
+ *
+ * add_post_meta()/update_post_meta() below call wp_unslash() before storing,
+ * exactly as WordPress's add_metadata()/update_metadata() do — so a caller
+ * that writes a get_post_meta() value straight back without wp_slash() first
+ * loses one level of backslashes here too, the same way it would in production.
+ *
+ * @param mixed  $value Value to transform.
+ * @param string $fn    'addslashes' or 'stripslashes'.
+ * @return mixed
+ */
+function spm_slashes_deep( $value, string $fn ) {
+	if ( is_array( $value ) ) {
+		return array_map(
+			static function ( $item ) use ( $fn ) {
+				return spm_slashes_deep( $item, $fn );
+			},
+			$value
+		);
+	}
+
+	if ( is_object( $value ) ) {
+		foreach ( get_object_vars( $value ) as $key => $data ) {
+			$value->$key = spm_slashes_deep( $data, $fn );
+		}
+		return $value;
+	}
+
+	return is_string( $value ) ? $fn( $value ) : $value;
+}
+
+function wp_slash( $value ) {
+	return spm_slashes_deep( $value, 'addslashes' );
+}
+
+function wp_unslash( $value ) {
+	return spm_slashes_deep( $value, 'stripslashes' );
+}
+
 function get_post_meta( $post_id, $key = '', $single = false ) {
 	$post_id = (int) $post_id;
 	spm_maybe_throw( 'get_post_meta', $post_id );
@@ -164,7 +205,7 @@ function add_post_meta( $post_id, $key, $value, $unique = false ) {
 		return false;
 	}
 
-	$GLOBALS['spm_meta'][ $post_id ][ $key ][] = $value;
+	$GLOBALS['spm_meta'][ $post_id ][ $key ][] = wp_unslash( $value );
 
 	return true;
 }
@@ -173,7 +214,7 @@ function update_post_meta( $post_id, $key, $value ) {
 	$post_id = (int) $post_id;
 	spm_maybe_throw( 'update_post_meta', $post_id );
 
-	$GLOBALS['spm_meta'][ $post_id ][ $key ] = array( $value );
+	$GLOBALS['spm_meta'][ $post_id ][ $key ] = array( wp_unslash( $value ) );
 
 	return true;
 }
@@ -328,6 +369,15 @@ class SPM_Test_wpdb {
 	 */
 	public $updates = array();
 
+	/**
+	 * FIFO of return values for successive update() calls. Empty means
+	 * "succeed" (return 1) — arm this to simulate a DB error (false),
+	 * mirroring what a real $wpdb->update() returns on failure.
+	 *
+	 * @var array
+	 */
+	public $update_return_queue = array();
+
 	public function query( $sql ) {
 		$this->queries[] = $sql;
 
@@ -356,6 +406,10 @@ class SPM_Test_wpdb {
 			'data'  => $data,
 			'where' => $where,
 		);
+
+		if ( ! empty( $this->update_return_queue ) ) {
+			return array_shift( $this->update_return_queue );
+		}
 
 		return 1;
 	}

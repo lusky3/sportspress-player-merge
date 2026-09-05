@@ -15,12 +15,11 @@ require_once __DIR__ . '/lib-ajax-mocks.php';
 
 echo "Duplicate scan coverage\n";
 
-$ajax = new SP_Merge_Ajax();
 
 /* 1. A roster larger than the old 2000 cap is scanned in full. */
 sp_test_seed_roster( 2121, 100 );
 
-$scan = $ajax->collect_scan_players();
+$scan = SP_Merge_Validation::collect_scan_players();
 $ids  = array_map( static fn( $p ) => $p->ID, $scan['players'] );
 
 sp_assert_same( 2121, $scan['scanned'], 'every player on a 2121-player roster is scanned' );
@@ -41,7 +40,7 @@ sp_assert_same( 0, $GLOBALS['sp_get_posts_calls'][0]['offset'] ?? -1, 'the first
 /* 2. An exactly-page-sized roster does not loop forever or double-count. */
 sp_test_seed_roster( 500, 1 );
 
-$scan = $ajax->collect_scan_players();
+$scan = SP_Merge_Validation::collect_scan_players();
 
 sp_assert_same( 500, $scan['scanned'], 'a roster that is an exact multiple of the page size is scanned once' );
 sp_assert_same( false, $scan['truncated'], 'an exactly-paged roster is not flagged as truncated' );
@@ -49,7 +48,7 @@ sp_assert_same( false, $scan['truncated'], 'an exactly-paged roster is not flagg
 /* 3. An empty roster reports zero rather than failing. */
 sp_test_seed_roster( 0 );
 
-$scan = $ajax->collect_scan_players();
+$scan = SP_Merge_Validation::collect_scan_players();
 
 sp_assert_same( 0, $scan['scanned'], 'an empty roster scans zero players' );
 sp_assert_same( 0, $scan['total'], 'an empty roster totals zero players' );
@@ -58,7 +57,7 @@ sp_assert_same( false, $scan['truncated'], 'an empty roster is not flagged as tr
 /* 4. Overflow past the hard cap is surfaced, not silent. */
 sp_test_seed_roster( 10001, 1 );
 
-$scan = $ajax->collect_scan_players();
+$scan = SP_Merge_Validation::collect_scan_players();
 
 sp_assert_same( 10000, $scan['scanned'], 'the hard cap bounds a runaway roster' );
 sp_assert_same( 10001, $scan['total'], 'the real published total is still reported' );
@@ -67,7 +66,7 @@ sp_assert_same( true, $scan['truncated'], 'an overflowing scan is flagged so the
 /* 5. A published total larger than what the query returns is reported honestly. */
 sp_test_seed_roster( 40, 1, 60 );
 
-$scan = $ajax->collect_scan_players();
+$scan = SP_Merge_Validation::collect_scan_players();
 
 sp_assert_same( 40, $scan['scanned'], 'only the rows actually returned count as scanned' );
 sp_assert_same( 60, $scan['total'], 'the published total is not silently rewritten to the scanned count' );

@@ -20,6 +20,15 @@
 		// Warnings the server raised about the previewed selection.
 		previewWarnings: [],
 
+		// True while a confirmation dialog is on screen. Every destructive action
+		// (execute merge, revert, delete backup) is gated behind customConfirm(),
+		// but the triggering button is only disabled once the user has already
+		// confirmed and the request is in flight — nothing stopped a second click
+		// on the same button from opening a second dialog first, and a second
+		// "Yes" from firing a second POST. One flag, checked in the one place
+		// every one of those flows funnels through, covers all of them.
+		confirmOpen: false,
+
 		/**
 		 * Accessible confirmation dialog with ARIA attributes and focus trapping.
 		 *
@@ -28,6 +37,12 @@
 		 * @return {Promise<boolean>}
 		 */
 		customConfirm: function( message, details ) {
+			var self = this;
+			if ( this.confirmOpen ) {
+				return Promise.resolve( false );
+			}
+			this.confirmOpen = true;
+
 			return new Promise( function( resolve ) {
 				var $trigger = $( document.activeElement );
 				var $modal = $( '<div class="sp-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="sp-confirm-title" tabindex="-1"></div>' );
@@ -53,6 +68,7 @@
 				function closeModal( result ) {
 					$modal.remove();
 					$trigger.focus();
+					self.confirmOpen = false;
 					resolve( result );
 				}
 
@@ -105,6 +121,7 @@
 		 * Initialize Select2 AJAX-powered player search on both selects.
 		 */
 		initSelect2: function() {
+			var self = this;
 			var ajaxConfig = {
 				url: spMergeAjax.ajaxUrl,
 				dataType: 'json',
@@ -120,6 +137,12 @@
 					if ( response.success && response.data && response.data.results ) {
 						return { results: response.data.results };
 					}
+
+					// A non-success envelope (an expired nonce, most often) looks
+					// identical to "no players match" if silently reduced to an
+					// empty result — the one search control the whole tool
+					// depends on failing with no visible signal. Surface it.
+					self.showMessage( 'error', ( response.data && response.data.message ) || 'Player search failed.' );
 					return { results: [] };
 				},
 				cache: true
@@ -150,8 +173,12 @@
 			$( '#cancel-preview' ).on( 'click', this.handleCancelPreview.bind( this ) );
 			$( document ).on( 'click', '.sp-revert-backup', this.handleBackupRevert.bind( this ) );
 			$( document ).on( 'click', '.sp-delete-backup', this.handleBackupDelete.bind( this ) );
-			$( '#select-all-backups' ).on( 'click', this.handleSelectAllBackups.bind( this ) );
-			$( '#delete-selected-backups' ).on( 'click', this.handleDeleteSelectedBackups.bind( this ) );
+			// Delegated, like every other backup-list control: createBackupSection()
+			// re-renders this header from scratch whenever the backup list changes
+			// (after a merge, revert, or delete), and a direct binding on the old
+			// element is gone once that element is replaced.
+			$( document ).on( 'click', '#select-all-backups', this.handleSelectAllBackups.bind( this ) );
+			$( document ).on( 'click', '#delete-selected-backups', this.handleDeleteSelectedBackups.bind( this ) );
 			$( document ).on( 'change', '.backup-checkbox', this.updateDeleteButtonState.bind( this ) );
 			// Any change to either select retires the preview: the card on screen
 			// must never describe a merge other than the one Execute would run.
@@ -433,11 +460,6 @@
 				this.previewWarnings = [];
 				$( '#preview-warnings' ).remove();
 				this.lastBackupId = response.data.backup_id;
-				try {
-					localStorage.setItem( 'sp_last_backup_id', this.lastBackupId );
-				} catch ( e ) {
-					// localStorage unavailable (private browsing).
-				}
 
 				$( '#execute-merge' ).prop( 'disabled', true );
 				this.showMessage( 'success', spMergeAjax.strings.mergeSuccess + ' Backup ID: ' + this.lastBackupId );
@@ -477,7 +499,11 @@
 
 		setLoadingState: function( isLoading ) {
 			if ( isLoading ) {
-				$( '#sp-merge-loading' ).show();
+				// .sp-hidden's display:none is !important, so a bare .show() (an
+				// inline style) never overrides it while the class is still on
+				// the element — same fix already applied to #merge-preview-card
+				// and #revert-merge elsewhere in this file.
+				$( '#sp-merge-loading' ).removeClass( 'sp-hidden' ).show();
 				$( '.sp-merge-wrap button:not(#cancel-preview)' ).prop( 'disabled', true );
 				$( '.sp-revert-backup, .sp-delete-backup' ).prop( 'disabled', true );
 			} else {
@@ -519,13 +545,6 @@
 			$( 'html, body' ).animate( {
 				scrollTop: $( '#sp-merge-messages' ).offset().top - 100
 			}, 300 );
-		},
-
-		resetForm: function() {
-			$( '#sp-merge-form' )[0].reset();
-			$( '#merge-preview-card' ).hide();
-			$( '#execute-merge' ).prop( 'disabled', true );
-			$( '.sp-merge-message' ).fadeOut();
 		},
 
 		handleBackupRevert: function( e ) {
@@ -571,11 +590,6 @@
 				.done( function( response ) {
 					if ( response.success ) {
 						self.lastBackupId = null;
-						try {
-							localStorage.removeItem( 'sp_last_backup_id' );
-						} catch ( e ) {
-							// localStorage unavailable.
-						}
 
 						self.showMessage( 'success', ( response.data && response.data.message ) || spMergeAjax.strings.revertSuccess );
 						setTimeout( function() {

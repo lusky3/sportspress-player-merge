@@ -163,6 +163,32 @@ sp_assert_same(
 	'--status filters before --limit — the newest FAILED backup, not the newest backup overall (which is active)'
 );
 
+/* 5d. A typo'd --status or --limit refuses instead of silently misreading it:
+ *     (int) cast "abc" to 0, which get_recent_backups() clamped to 1, so
+ *     --limit=abc used to silently return exactly one row; an unknown
+ *     --status used to silently return zero rows with no diagnosis. */
+sp_test_cli_reset();
+sp_test_seed_backup( 'merge_e', sp_test_backup_payload( 7, 8 ), 'active', null, null, 7 );
+
+$threw = null;
+try {
+	( new SP_Merge_CLI_Backups() )->list( array(), array( 'status' => 'bogus' ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, '--status=bogus refuses instead of silently returning zero rows' );
+sp_assert_contains( '--status', $threw ? $threw->getMessage() : '', 'the refusal names --status' );
+sp_assert_contains( 'bogus', $threw ? $threw->getMessage() : '', 'the refusal echoes back the bad value' );
+
+$threw = null;
+try {
+	( new SP_Merge_CLI_Backups() )->list( array(), array( 'limit' => 'abc' ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, '--limit=abc refuses instead of silently returning exactly one row' );
+sp_assert_contains( '--limit', $threw ? $threw->getMessage() : '', 'the refusal names --limit' );
+
 /* 5c. --format=csv/json use a machine-sortable date; --format=table keeps the
  *     locale-friendly one. */
 sp_test_cli_reset();

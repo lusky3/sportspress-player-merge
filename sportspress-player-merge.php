@@ -92,7 +92,17 @@ class SportsPress_Player_Merge_Init {
 	 * Initialize the plugin — admin only.
 	 */
 	public function init(): void {
-		if ( ! is_admin() && ! wp_doing_ajax() && ! ( defined( 'WP_CLI' ) && WP_CLI ) ) {
+		/*
+		 * wp_doing_cron() matters here specifically for the updater block just
+		 * below: wp_update_plugins() (core's own update check, and
+		 * WP_Automatic_Updater::run(), which performs the actual auto-update)
+		 * both run from WP-Cron, not from an admin request. Without it, this
+		 * plugin's update filters were never registered when the very things
+		 * that check for and install updates ran, so the update badge only
+		 * appeared depending on which request type happened to check first,
+		 * and the plugin could never auto-update at all.
+		 */
+		if ( ! is_admin() && ! wp_doing_ajax() && ! wp_doing_cron() && ! ( defined( 'WP_CLI' ) && WP_CLI ) ) {
 			return;
 		}
 
@@ -132,18 +142,20 @@ class SportsPress_Player_Merge_Init {
 			'class-sp-merge-preview.php',
 		);
 
+		/*
+		 * Plain require_once: these files ship together in every release, so a
+		 * missing or unreadable one is not a version-skew scenario worth
+		 * degrading gracefully for — it should fail loudly rather than load a
+		 * plugin that registers no hooks and shows no menu with no error at all.
+		 */
 		foreach ( $class_files as $file ) {
-			$file_path = SP_MERGE_PLUGIN_PATH . 'classes/' . $file;
-			if ( file_exists( $file_path ) ) {
-				require_once $file_path;
-			}
+			require_once SP_MERGE_PLUGIN_PATH . 'classes/' . $file;
 		}
 
-		if ( class_exists( 'SP_Merge_Controller' ) ) {
-			$GLOBALS['sp_merge_controller'] = new SP_Merge_Controller();
-		}
+		$GLOBALS['sp_merge_controller'] = new SP_Merge_Controller();
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-support.php';
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli.php';
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-backups.php';
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-batch.php';

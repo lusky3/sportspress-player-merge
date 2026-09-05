@@ -95,7 +95,6 @@ class SP_Merge_GitHub_Updater {
 
 		add_filter( 'pre_set_site_transient_update_plugins', array( $this, 'check_update' ) );
 		add_filter( 'plugins_api', array( $this, 'plugin_info' ), 20, 3 );
-		add_filter( 'upgrader_post_install', array( $this, 'post_install' ), 10, 3 );
 	}
 
 	/**
@@ -191,11 +190,17 @@ class SP_Merge_GitHub_Updater {
 	/**
 	 * Check GitHub for a newer release and inject into the update transient.
 	 *
-	 * @param object $transient The update_plugins transient.
-	 * @return object Modified transient.
+	 * No type hints: core calls this with whatever set_site_transient()
+	 * was last given, and a "clear update cache" action routinely passes
+	 * null or an empty array rather than the real transient object — a
+	 * non-nullable `object` parameter (or return) would TypeError-fatal
+	 * every admin request the moment that happens.
+	 *
+	 * @param mixed $transient The update_plugins transient, or null/array/etc.
+	 * @return mixed Modified transient, or the input unchanged if it wasn't usable.
 	 */
-	public function check_update( object $transient ): object {
-		if ( self::is_disabled() || empty( $transient->checked ) ) {
+	public function check_update( $transient ) {
+		if ( self::is_disabled() || ! is_object( $transient ) || empty( $transient->checked ) ) {
 			return $transient;
 		}
 
@@ -272,44 +277,11 @@ class SP_Merge_GitHub_Updater {
 	}
 
 	/**
-	 * After install, rename the extracted folder to match the plugin slug.
-	 *
-	 * GitHub zipballs extract to owner-repo-hash/ which doesn't match the expected plugin directory name.
-	 *
-	 * @param bool  $response   Install response.
-	 * @param array $hook_extra Extra arguments.
-	 * @param array $result     Install result.
-	 * @return array Modified result.
-	 */
-	public function post_install( bool $response, array $hook_extra, array $result ): array {
-		if ( ! isset( $hook_extra['plugin'] ) || $this->basename !== $hook_extra['plugin'] ) {
-			return $result;
-		}
-
-		global $wp_filesystem;
-
-		$proper_dir = WP_PLUGIN_DIR . '/' . $this->slug;
-		$wp_filesystem->move( $result['destination'], $proper_dir );
-		$result['destination'] = $proper_dir;
-
-		// Re-activate if it was active before the update.
-		if ( is_plugin_active( $this->basename ) ) {
-			activate_plugin( $this->basename );
-		}
-
-		return $result;
-	}
-
-	/**
 	 * Fetch the latest release from GitHub API. Cached for 6 hours.
 	 *
 	 * @return object|null Release data or null.
 	 */
 	private function get_latest_release(): ?object {
-		if ( self::is_disabled() ) {
-			return null;
-		}
-
 		if ( null !== $this->github_release ) {
 			return $this->github_release;
 		}

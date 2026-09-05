@@ -67,7 +67,12 @@ spm_assert_equals( array( 'goals' => '9' ), $renamed[9][0], 'reserved key 0 surv
 spm_assert_equals( array( 'goals' => '2' ), $renamed[9][100], 'the duplicate row is renamed to the primary' );
 
 /*
- * Scalar values: a literal "0" must never be mistaken for a player reference.
+ * Scalar values: event-stat structures (sp_players, sp_timeline, sp_order,
+ * sp_stars) key player IDs but never reference them as leaf VALUES — a stat
+ * that happens to equal the duplicate's post ID must not be rewritten. The
+ * default $replace_values = false leaves every scalar leaf untouched; only
+ * key-based renaming (already covered by the sp_players/sp_timeline
+ * scenarios above) applies here.
  */
 $scalars = array(
 	'team'   => '0',
@@ -78,8 +83,20 @@ $scalars = array(
 $scalar_result = spm_invoke( $processor, 'replace_player_id_in_structure', $scalars, 100, 200, 'sp_order' );
 
 spm_assert_equals( '0', $scalar_result['team'], 'a scalar "0" is left alone' );
-spm_assert_equals( '100', $scalar_result['player'], 'a scalar duplicate ID is rewritten' );
+spm_assert_equals( '200', $scalar_result['player'], 'a scalar value equal to the duplicate ID is left alone — event stat values are not player references' );
 spm_assert_equals( '300', $scalar_result['other'], 'an unrelated scalar ID is left alone' );
+
+/*
+ * sp_list is the one caller that opts into value-level replacement: its
+ * sp_players meta is a flat [index => player_id] list, where the player ID
+ * genuinely IS the leaf value, not a stat that happens to collide with one.
+ */
+$list_scalars = array( 0 => '100', 1 => '200', 2 => '300' );
+
+$list_result = spm_invoke( $processor, 'replace_player_id_in_structure', $list_scalars, 100, 200, 'sp_list', true );
+
+spm_assert_equals( '100', $list_result[1], 'sp_list opts in: a scalar duplicate ID is rewritten' );
+spm_assert_equals( '300', $list_result[2], 'sp_list: an unrelated scalar ID is left alone' );
 
 /*
  * sp_timeline collisions append, sort and de-duplicate minutes.

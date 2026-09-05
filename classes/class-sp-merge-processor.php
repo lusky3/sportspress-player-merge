@@ -207,9 +207,22 @@ class SP_Merge_Processor {
 
 			$wpdb->query( 'COMMIT' );
 
-			// Only a committed merge promotes the backup out of `pending`.
-			if ( method_exists( $backup, 'mark_active' ) ) {
-				$backup->mark_active( $backup_id );
+			/*
+			 * Only a committed merge promotes the backup out of `pending`. A
+			 * false return here (a race, or the schema upgrade that adds
+			 * post_hashes having silently failed) means post_hashes is never
+			 * recorded — every future revert of THIS backup will then refuse
+			 * with values_changed, since there is nothing to compare against.
+			 * The merge itself already committed, so this must not fail loudly;
+			 * it must not fail silently either.
+			 */
+			if ( method_exists( $backup, 'mark_active' ) && ! $backup->mark_active( $backup_id ) ) {
+				error_log( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					sprintf(
+						'SP Merge: mark_active() failed for backup %s. Revert will require --force until this is investigated.',
+						$backup_id
+					)
+				);
 			}
 
 			$this->clear_sportspress_caches( $primary_id, $duplicate_ids );
@@ -392,7 +405,16 @@ class SP_Merge_Processor {
 
 			foreach ( $values as $value ) {
 				if ( ! in_array( $value, $existing, true ) ) {
-					add_post_meta( $primary_id, $key, $value );
+					/*
+					 * get_post_meta() returns values already unslashed, and
+					 * add_post_meta()/update_post_meta() unslash again on the
+					 * way in — a bare round-trip strips one level of
+					 * backslashes from anything that legitimately has them
+					 * (a Windows path, escaped JSON, regex in a custom
+					 * field). wp_slash() restores the level WordPress is
+					 * about to remove.
+					 */
+					add_post_meta( $primary_id, $key, wp_slash( $value ) );
 				}
 			}
 		}
@@ -436,7 +458,7 @@ class SP_Merge_Processor {
 		}
 
 		if ( empty( $primary_value ) || ! is_array( $primary_value ) ) {
-			update_post_meta( $primary_id, $key, $duplicate_value );
+			update_post_meta( $primary_id, $key, wp_slash( $duplicate_value ) );
 			return;
 		}
 
@@ -448,7 +470,7 @@ class SP_Merge_Processor {
 				'duplicate_id' => $duplicate_id,
 			)
 		);
-		update_post_meta( $primary_id, $key, $merged );
+		update_post_meta( $primary_id, $key, wp_slash( $merged ) );
 	}
 
 	/**
@@ -702,6 +724,28 @@ class SP_Merge_Processor {
 	}
 
 	/**
+	 * Check if an array is numerically indexed AND holds only scalar values —
+	 * the flat [index => player_id] shape sp_list's sp_players meta uses, as
+	 * opposed to event meta's [team => [player => [stat => value]]] nesting.
+	 *
+	 * @param array $arr Array to check.
+	 * @return bool
+	 */
+	private function is_flat_scalar_list( array $arr ): bool {
+		if ( ! $this->is_numeric_indexed( $arr ) ) {
+			return false;
+		}
+
+		foreach ( $arr as $value ) {
+			if ( is_array( $value ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
 	 * Remove duplicate values from multi-value meta fields.
 	 *
 	 * @param int $player_id Player ID.
@@ -720,7 +764,7 @@ class SP_Merge_Processor {
 				delete_post_meta( $player_id, $field );
 				foreach ( $unique as $value ) {
 					if ( '' !== $value && '0' !== $value ) {
-						add_post_meta( $player_id, $field, $value );
+						add_post_meta( $player_id, $field, wp_slash( $value ) );
 					}
 				}
 			}
@@ -748,7 +792,7 @@ class SP_Merge_Processor {
 
 		// Simple meta: exact-match update.
 		foreach ( self::SIMPLE_PLAYER_META_KEYS as $meta_key ) {
-			$wpdb->update(
+			$updated_rows = $wpdb->update(
 				$wpdb->postmeta,
 				array( 'meta_value' => (string) $primary_id ),
 				array(
@@ -758,10 +802,54 @@ class SP_Merge_Processor {
 				array( '%s' ),
 				array( '%s', '%s' )
 			);
+
+			if ( false === $updated_rows ) {
+				throw new Exception(
+					sprintf(
+						/* translators: %s: meta key */
+						__( 'Failed to update %s references from the merged player.', 'sportspress-player-merge' ),
+						$meta_key
+					)
+				);
+			}
+
+			/*
+			 * A post that already carried both players under this key — the
+			 * same-event collision the preview warns about — now has two
+			 * identical rows after the rewrite above. Collapse them, keeping
+			 * the lowest meta_id: the row the backup captured first, so
+			 * revert's meta_id-scoped restore still finds it.
+			 */
+			$this->deduplicate_simple_meta_row( $meta_key, $primary_id );
 		}
 
 		// Serialized meta: structure-aware replacement using pre-collected event IDs.
 		$this->update_serialized_event_meta( $primary_id, $duplicate_id, $event_ids );
+	}
+
+	/**
+	 * Collapse duplicate (post_id, meta_key, meta_value) rows left behind when
+	 * a simple-meta rewrite collides with a row the primary already had.
+	 *
+	 * @param string   $meta_key   Meta key just rewritten.
+	 * @param int      $primary_id Surviving value.
+	 * @param int|null $post_id    Restrict to one post, or null for every post
+	 *                             the update above could have touched.
+	 */
+	private function deduplicate_simple_meta_row( string $meta_key, int $primary_id, ?int $post_id = null ): void {
+		global $wpdb;
+
+		$sql = "DELETE p1 FROM {$wpdb->postmeta} p1
+			INNER JOIN {$wpdb->postmeta} p2
+				ON p1.post_id = p2.post_id
+				AND p1.meta_key = p2.meta_key
+				AND p1.meta_value = p2.meta_value
+				AND p1.meta_id > p2.meta_id
+			WHERE " . ( null !== $post_id ? 'p1.post_id = %d AND ' : '' ) . 'p1.meta_key = %s AND p1.meta_value = %s';
+
+		$args = null !== $post_id ? array( $post_id, $meta_key, (string) $primary_id ) : array( $meta_key, (string) $primary_id );
+
+		$wpdb->query( $wpdb->prepare( $sql, $args ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 	}
 
 	/**
@@ -792,7 +880,7 @@ class SP_Merge_Processor {
 
 				$updated = $this->replace_player_id_in_structure( $raw, $primary_id, $duplicate_id, $meta_key );
 				if ( $updated !== $raw ) {
-					update_post_meta( $event_id, $meta_key, $updated );
+					update_post_meta( $event_id, $meta_key, wp_slash( $updated ) );
 				}
 			}
 		}
@@ -803,22 +891,32 @@ class SP_Merge_Processor {
 	 * For sp_players: sums numeric performance values on collision.
 	 * For sp_timeline: appends minute arrays on collision.
 	 *
-	 * @param array  $data         The data structure.
-	 * @param int    $primary_id   Primary player ID.
-	 * @param int    $duplicate_id Duplicate player ID.
-	 * @param string $meta_key     The meta key context for merge strategy.
+	 * @param array  $data           The data structure.
+	 * @param int    $primary_id     Primary player ID.
+	 * @param int    $duplicate_id   Duplicate player ID.
+	 * @param string $meta_key       The meta key context for merge strategy.
+	 * @param bool   $replace_values Also rewrite leaf scalar values that equal
+	 *                               $duplicate_id, not just array keys. Only
+	 *                               correct where player IDs can appear as
+	 *                               values — sp_list's flat sp_players array.
+	 *                               Event stat structures (sp_players,
+	 *                               sp_timeline) key player IDs; a stat value
+	 *                               that happens to equal a player ID must not
+	 *                               be rewritten, so this stays false there.
 	 * @return array Modified structure.
 	 */
-	private function replace_player_id_in_structure( array $data, int $primary_id, int $duplicate_id, string $meta_key = '' ): array {
+	private function replace_player_id_in_structure( array $data, int $primary_id, int $duplicate_id, string $meta_key = '', bool $replace_values = false ): array {
 		$result = array();
 
 		foreach ( $data as $key => $value ) {
 			$new_key = ( (int) $key === $duplicate_id ) ? $primary_id : $key;
 
 			if ( is_array( $value ) ) {
-				$new_value = $this->replace_player_id_in_structure( $value, $primary_id, $duplicate_id, $meta_key );
-			} else {
+				$new_value = $this->replace_player_id_in_structure( $value, $primary_id, $duplicate_id, $meta_key, $replace_values );
+			} elseif ( $replace_values ) {
 				$new_value = ( (int) $value === $duplicate_id ) ? (string) $primary_id : $value;
+			} else {
+				$new_value = $value;
 			}
 
 			// Handle collision: both primary and duplicate exist under the same parent key.
@@ -946,7 +1044,7 @@ class SP_Merge_Processor {
 			$this->touched_post_ids[] = $list_id;
 
 			// Update simple sp_player meta rows.
-			$wpdb->update(
+			$updated_rows = $wpdb->update(
 				$wpdb->postmeta,
 				array( 'meta_value' => (string) $primary_id ),
 				array(
@@ -958,12 +1056,39 @@ class SP_Merge_Processor {
 				array( '%d', '%s', '%s' )
 			);
 
+			if ( false === $updated_rows ) {
+				throw new Exception(
+					sprintf(
+						/* translators: %d: list post ID */
+						__( 'Failed to update sp_player references on list %d.', 'sportspress-player-merge' ),
+						$list_id
+					)
+				);
+			}
+
+			// A list that already carried both players under sp_player now has
+			// two identical rows — collapse to the one the backup captured first.
+			$this->deduplicate_simple_meta_row( 'sp_player', $primary_id, $list_id );
+
 			// Update serialized sp_players meta if present.
 			$players_data = get_post_meta( $list_id, 'sp_players', true );
 			if ( is_array( $players_data ) ) {
-				$updated = $this->replace_player_id_in_structure( $players_data, $primary_id, $duplicate_id, 'sp_list' );
+				$updated = $this->replace_player_id_in_structure( $players_data, $primary_id, $duplicate_id, 'sp_list', true );
+
+				/*
+				 * sp_list's sp_players is a flat [index => player_id] list, not
+				 * a keyed structure — a player ID appearing twice is a
+				 * duplicate VALUE, not a key collision merge_collision() can
+				 * see. If the list already held both players, renaming the
+				 * duplicate's entry above just gave the primary's ID two
+				 * indices.
+				 */
+				if ( $this->is_flat_scalar_list( $updated ) ) {
+					$updated = array_values( array_unique( $updated, SORT_STRING ) );
+				}
+
 				if ( $updated !== $players_data ) {
-					update_post_meta( $list_id, 'sp_players', $updated );
+					update_post_meta( $list_id, 'sp_players', wp_slash( $updated ) );
 				}
 			}
 

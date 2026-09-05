@@ -241,4 +241,39 @@ $oconnor = SP_Merge_Name_Matcher::compare(
 );
 spm_assert( $oconnor['match'], 'surname particle normalisation still matches' );
 
+/*
+ * Regression: a single-word particle (van, de, le, ...) directly before the
+ * surname must be recognized as part of it the same way a two-word particle
+ * like "van der" already is. Before the fix, "Kim Van Horn" (last = "horn",
+ * the "van" discarded into $middle) and "Kim VanHorn" (last = "vanhorn")
+ * parsed to different surnames and never matched at all. Folding the
+ * particle onto $last in parse_name() makes both spellings parse to the
+ * identical surname "vanhorn", so this is now caught as scenario 1 (exact),
+ * not merely scenario 6 (normalization) — a stronger result than a
+ * normalization match, and correctly so: these are unambiguously the same
+ * parsed name, not two different surnames that happen to normalize alike.
+ */
+$van_horn = SP_Merge_Name_Matcher::compare(
+	SP_Merge_Name_Matcher::parse_name( 'Kim Van Horn' ),
+	SP_Merge_Name_Matcher::parse_name( 'Kim VanHorn' )
+);
+spm_assert( $van_horn['match'], 'a single-word particle (Van Horn / VanHorn) is folded into the same surname' );
+spm_assert_equals( 100, $van_horn['certainty'], 'it scores as an exact match once folded, not a low-confidence typo' );
+
+// The existing two-word particle case must still work identically afterwards.
+$van_der_berg = SP_Merge_Name_Matcher::compare(
+	SP_Merge_Name_Matcher::parse_name( 'Johan van der Berg' ),
+	SP_Merge_Name_Matcher::parse_name( 'Johan VanDerBerg' )
+);
+spm_assert( $van_der_berg['match'], 'a two-word particle (van der Berg / VanDerBerg) still normalizes to the same surname' );
+spm_assert_equals( 95, $van_der_berg['certainty'], 'it still scores as a normalization match (last = "berg" vs "vanderberg" before normalizing)' );
+
+// A Quebec/Acadian surname the matcher's own nickname table is built for.
+$le_blanc = SP_Merge_Name_Matcher::compare(
+	SP_Merge_Name_Matcher::parse_name( 'Marie Le Blanc' ),
+	SP_Merge_Name_Matcher::parse_name( 'Marie LeBlanc' )
+);
+spm_assert( $le_blanc['match'], 'Le Blanc / LeBlanc is folded into the same surname' );
+spm_assert_equals( 100, $le_blanc['certainty'], 'Le Blanc / LeBlanc scores as an exact match, not a levenshtein-typo guess' );
+
 spm_test_summary();

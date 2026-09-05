@@ -17,16 +17,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SP_Merge_Ajax {
 
 	/**
-	 * Hard ceiling on the number of players a single scan will load.
-	 */
-	private const MAX_SCAN_PLAYERS = 10000;
-
-	/**
-	 * Players fetched per scan page.
-	 */
-	private const SCAN_PAGE_SIZE = 500;
-
-	/**
 	 * Handle preview merge request.
 	 */
 	public function preview_merge(): void {
@@ -350,62 +340,6 @@ class SP_Merge_Ajax {
 	}
 
 	/**
-	 * Load every published player the duplicate scan should consider.
-	 *
-	 * Paged rather than a single capped query: `posts_per_page => 2000` with the
-	 * default newest-first ordering silently dropped the oldest records on a
-	 * roster larger than the cap, and those long-history records are exactly the
-	 * ones most likely to be the correct survivor. Ordering by ID ascending also
-	 * keeps the paging stable across batches.
-	 *
-	 * @return array{players: array, scanned: int, total: int, truncated: bool}
-	 */
-	public function collect_scan_players(): array {
-		$players = array();
-		$loaded  = 0;
-
-		while ( $loaded < self::MAX_SCAN_PLAYERS ) {
-			$batch = get_posts(
-				array(
-					'post_type'      => 'sp_player',
-					'posts_per_page' => self::SCAN_PAGE_SIZE,
-					'offset'         => $loaded,
-					'no_found_rows'  => true,
-					'post_status'    => 'publish',
-					'orderby'        => 'ID',
-					'order'          => 'ASC',
-				)
-			);
-
-			$batch_size = count( $batch );
-			if ( 0 === $batch_size ) {
-				break;
-			}
-
-			$players = array_merge( $players, $batch );
-			$loaded += $batch_size;
-
-			if ( $batch_size < self::SCAN_PAGE_SIZE ) {
-				break;
-			}
-		}
-
-		$players = array_slice( $players, 0, self::MAX_SCAN_PLAYERS );
-		$scanned = count( $players );
-
-		$counts = wp_count_posts( 'sp_player' );
-		$total  = isset( $counts->publish ) ? (int) $counts->publish : $scanned;
-		$total  = max( $total, $scanned );
-
-		return array(
-			'players'   => $players,
-			'scanned'   => $scanned,
-			'total'     => $total,
-			'truncated' => $scanned < $total,
-		);
-	}
-
-	/**
 	 * Read a field from a name-matcher group member.
 	 *
 	 * Members are post objects today. The matcher is being reworked to attach a
@@ -461,7 +395,7 @@ class SP_Merge_Ajax {
 			return;
 		}
 
-		$scan    = $this->collect_scan_players();
+		$scan    = SP_Merge_Validation::collect_scan_players();
 		$players = $scan['players'];
 
 		$player_ids = wp_list_pluck( $players, 'ID' );
@@ -596,17 +530,8 @@ class SP_Merge_Ajax {
 		$event_counts = SP_Merge_Validation::get_event_counts( wp_list_pluck( $players, 'ID' ) );
 
 		foreach ( $players as $player ) {
-			$team = '';
-			$team_ids = get_post_meta( $player->ID, 'sp_current_team' );
-			foreach ( array_reverse( $team_ids ) as $tid ) {
-				if ( $tid && '0' !== $tid ) {
-					$t = get_post( (int) $tid );
-					if ( $t && 'sp_team' === $t->post_type ) {
-						$team = $t->post_title;
-						break;
-					}
-				}
-			}
+			$current_team = SP_Merge_Validation::current_team( $player->ID );
+			$team         = $current_team['name'] ?? '';
 
 			$results[] = array(
 				'id'   => $player->ID,

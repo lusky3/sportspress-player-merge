@@ -54,10 +54,6 @@ function sanitize_text_field( $value ) {
 	return trim( strip_tags( (string) $value ) );
 }
 
-function wp_unslash( $value ) {
-	return is_string( $value ) ? stripslashes( $value ) : $value;
-}
-
 function current_user_can( $capability ) {
 	return ! in_array( $capability, $GLOBALS['sp_denied_caps'] ?? array(), true );
 }

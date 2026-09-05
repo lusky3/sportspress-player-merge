@@ -121,4 +121,37 @@ spm_invoke( $processor, 'merge_meta_data', 100, 200 );
 spm_assert_equals( array(), get_post_meta( 100, 'sp_columns' ), 'sp_columns is still skipped' );
 spm_assert_equals( array(), get_post_meta( 100, 'sp_number' ), 'sp_number is still skipped' );
 
+/*
+ * Scenario 5: a value containing a backslash (a Windows path, escaped JSON, a
+ * regex in a custom field) must survive a merge byte-for-byte. get_post_meta()
+ * returns values already unslashed; add_post_meta()/update_post_meta() unslash
+ * again on the way in, so a bare read-then-write round-trip strips one level
+ * of backslashes unless the write is wrapped in wp_slash() first. The mock
+ * meta store faithfully models this (it unslashes on write, same as real
+ * WordPress), so this test fails without the wp_slash() fix.
+ */
+spm_reset(
+	array(
+		100 => array(),
+		200 => array(
+			'spt_email'      => array( 'C:\\Users\\coach\\roster.csv' ),
+			'sp_statistics'  => array( array( 'note' => 'regex: ^\\d+$' ) ),
+		),
+	)
+);
+
+$processor = new SP_Merge_Processor();
+spm_invoke( $processor, 'merge_meta_data', 100, 200 );
+
+spm_assert_equals(
+	array( 'C:\\Users\\coach\\roster.csv' ),
+	get_post_meta( 100, 'spt_email' ),
+	'a backslash in third-party meta survives the merge byte-for-byte'
+);
+spm_assert_equals(
+	array( array( 'note' => 'regex: ^\\d+$' ) ),
+	get_post_meta( 100, 'sp_statistics' ),
+	'a backslash inside a merged array field survives the merge byte-for-byte'
+);
+
 spm_test_summary();

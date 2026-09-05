@@ -472,6 +472,7 @@ namespace {
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-processor.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-preview.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-admin.php';
+	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli-support.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli-backups.php';
 	require_once dirname( __DIR__ ) . '/classes/class-sp-merge-cli-batch.php';
