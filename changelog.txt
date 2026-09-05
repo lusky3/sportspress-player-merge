@@ -1,5 +1,10 @@
 # SportsPress Player Merge - Changelog
 
+## Unreleased
+
+### Changes
+- The "edit" link beside each player in the duplicate scan results now opens in a new tab, so reviewing a player's edit screen no longer loses the scan results in progress.
+
 ## Version 1.3.1
 
 ### Bug Fixes
