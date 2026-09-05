@@ -88,16 +88,42 @@ final class SPM_Coverage_Support {
 		$root  = self::root();
 		$files = array( $root . '/sportspress-player-merge.php' );
 
+		// GLOB_BRACE's recursive shorthand isn't portable, so descend by hand:
+		// neither classes/ nor includes/ is nested today, but a flat glob would
+		// silently drop a future subdirectory's files from the report with
+		// nothing to flag the gap.
 		foreach ( array( 'classes', 'includes' ) as $directory ) {
-			$found = glob( $root . '/' . $directory . '/*.php' );
-
-			if ( $found ) {
-				sort( $found );
-				$files = array_merge( $files, $found );
-			}
+			$found = self::php_files_recursive( $root . '/' . $directory );
+			sort( $found );
+			$files = array_merge( $files, $found );
 		}
 
 		return array_values( array_filter( $files, 'is_file' ) );
+	}
+
+	/**
+	 * Every .php file under a directory, at any depth.
+	 *
+	 * @param string $directory Directory to search.
+	 * @return string[] Absolute file paths.
+	 */
+	private static function php_files_recursive( string $directory ): array {
+		if ( ! is_dir( $directory ) ) {
+			return array();
+		}
+
+		$iterator = new RecursiveIteratorIterator(
+			new RecursiveDirectoryIterator( $directory, FilesystemIterator::SKIP_DOTS )
+		);
+
+		$files = array();
+		foreach ( $iterator as $file ) {
+			if ( $file->isFile() && 'php' === $file->getExtension() ) {
+				$files[] = $file->getPathname();
+			}
+		}
+
+		return $files;
 	}
 
 	/**
