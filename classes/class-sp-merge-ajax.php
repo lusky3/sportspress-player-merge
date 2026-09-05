@@ -491,9 +491,9 @@ class SP_Merge_Ajax {
 	}
 
 	/**
-	 * Handle AJAX player search for Select2.
+	 * Handle AJAX player search for the admin screen's player-picker dropdowns.
 	 *
-	 * Select2 sends search requests via GET, so we read from $_GET.
+	 * The frontend issues these as GET requests, so we read from $_GET.
 	 */
 	public function search_players(): void {
 		if ( ! current_user_can( 'edit_sp_players' ) ) {
