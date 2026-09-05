@@ -98,8 +98,8 @@ sportspress-player-merge/
 ├── .github/workflows/       # CI/CD (lint, security, compat, release, plugin-check)
 ├── assets/
 │   ├── css/admin.css        # Admin styling
-│   ├── js/admin.js          # AJAX interactions, Select2, drag-and-drop
-│   └── vendor/select2/      # Bundled Select2 (no CDN dependency)
+│   ├── js/admin.js          # AJAX interactions, SlimSelect, drag-and-drop
+│   └── vendor/slimselect/   # Bundled SlimSelect (no CDN dependency)
 ├── classes/
 │   ├── class-sp-merge-admin.php          # Admin menu and asset enqueue
 │   ├── class-sp-merge-ajax.php           # AJAX handlers

@@ -52,9 +52,9 @@ class SP_Merge_Admin {
 	 * Minified assets are produced by the release workflow and are deliberately
 	 * NOT committed, so a git-cloned install — or one updated from the GitHub
 	 * source zipball rather than the built release asset — has no
-	 * `admin.min.js`. Enqueuing it regardless returned a 404: Select2 never
-	 * initialised, both player dropdowns stayed empty (they are populated only
-	 * over AJAX) and every control on the page was inert, with no error shown.
+	 * `admin.min.js`. Enqueuing it regardless returned a 404: the player-search
+	 * dropdowns never initialised (they are populated only over AJAX) and every
+	 * control on the page was inert, with no error shown.
 	 *
 	 * Prefer the minified file when it is actually present, and fall back to the
 	 * unminified source otherwise, so the tool works from any install method.
@@ -93,26 +93,28 @@ class SP_Merge_Admin {
 			SP_MERGE_VERSION
 		);
 
-		// Select2 for AJAX-powered player search.
+		// SlimSelect for AJAX-powered player search. No jQuery dependency of
+		// its own — admin.js still depends on jquery separately, for the AJAX
+		// calls and everything else on this page.
 		wp_enqueue_style(
-			'sp-merge-select2-css',
-			SP_MERGE_PLUGIN_URL . 'assets/vendor/select2/select2.min.css',
+			'sp-merge-slimselect-css',
+			SP_MERGE_PLUGIN_URL . 'assets/vendor/slimselect/slimselect.min.css',
 			array(),
-			'4.1.0-rc.0'
+			'4.2.3'
 		);
 
 		wp_enqueue_script(
-			'sp-merge-select2-js',
-			SP_MERGE_PLUGIN_URL . 'assets/vendor/select2/select2.min.js',
-			array( 'jquery' ),
-			'4.1.0-rc.0',
+			'sp-merge-slimselect-js',
+			SP_MERGE_PLUGIN_URL . 'assets/vendor/slimselect/slimselect.min.js',
+			array(),
+			'4.2.3',
 			true
 		);
 
 		wp_enqueue_script(
 			'sp-merge-admin-js',
 			SP_MERGE_PLUGIN_URL . "assets/js/admin{$js_suffix}.js",
-			array( 'jquery', 'sp-merge-select2-js' ),
+			array( 'jquery', 'sp-merge-slimselect-js' ),
 			SP_MERGE_VERSION,
 			true
 		);

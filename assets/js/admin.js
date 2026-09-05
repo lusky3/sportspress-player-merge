@@ -6,6 +6,8 @@
  * @package SportsPress_Player_Merge
  */
 
+/* global SlimSelect */
+
 ( function( $ ) {
 	'use strict';
 
@@ -28,6 +30,14 @@
 		// "Yes" from firing a second POST. One flag, checked in the one place
 		// every one of those flows funnels through, covers all of them.
 		confirmOpen: false,
+
+		// SlimSelect instances for the two player-search dropdowns. Needed to
+		// reset the visual UI after a merge: SlimSelect wraps and hides the
+		// real <select>, so setting its .val() directly (as jQuery normally
+		// would) changes the underlying element without ever telling SlimSelect
+		// to re-render — only its own setSelected() does both.
+		primarySelect: null,
+		duplicatesSelect: null,
 
 		/**
 		 * Accessible confirmation dialog with ARIA attributes and focus trapping.
@@ -111,58 +121,94 @@
 		},
 
 		init: function() {
-			this.initSelect2();
+			this.initPlayerSearch();
 			this.bindEvents();
 			this.checkForExistingBackup();
 			this.initDraggableCards();
 		},
 
 		/**
-		 * Initialize Select2 AJAX-powered player search on both selects.
+		 * Initialize SlimSelect AJAX-powered player search on both selects.
+		 *
+		 * SlimSelect only calls events.search once the user has typed at least
+		 * one character — unlike Select2's minimumInputLength: 0, it never
+		 * fires its remote-search event for an empty query (search('') is
+		 * defined to clear back to the local catalog instead). Both dropdowns
+		 * open blank until then; the roster is large enough that "first 20
+		 * players alphabetically" wasn't a particularly useful default anyway.
 		 */
-		initSelect2: function() {
+		initPlayerSearch: function() {
 			var self = this;
-			var ajaxConfig = {
-				url: spMergeAjax.ajaxUrl,
-				dataType: 'json',
-				delay: 300,
-				data: function( params ) {
-					return {
-						action: 'sp_search_players',
-						nonce: spMergeAjax.nonce,
-						search: params.term || ''
-					};
-				},
-				processResults: function( response ) {
-					if ( response.success && response.data && response.data.results ) {
-						return { results: response.data.results };
-					}
 
-					// A non-success envelope (an expired nonce, most often) looks
-					// identical to "no players match" if silently reduced to an
-					// empty result — the one search control the whole tool
-					// depends on failing with no visible signal. Surface it.
-					self.showMessage( 'error', ( response.data && response.data.message ) || 'Player search failed.' );
-					return { results: [] };
-				},
-				cache: true
-			};
+			/**
+			 * Shared remote-search handler for both dropdowns.
+			 *
+			 * SlimSelect checks the return value with `instanceof Promise`, so a
+			 * bare jQuery jqXHR (or its own .then() chain) fails that check — a
+			 * jQuery Deferred is thenable but is not a native Promise instance,
+			 * even after chaining .then() on it. Wrapping in `new Promise()`
+			 * forces a genuine native Promise as the return value; confirmed
+			 * live (without this the console read "Search event must return a
+			 * promise or an array of data" and no results ever rendered).
+			 *
+			 * @param {string} search Current search box text.
+			 * @return {Promise<Array>} Resolves to a SlimSelect option array.
+			 */
+			function searchPlayers( search ) {
+				return new Promise( function( resolve ) {
+					$.ajax( {
+						url: spMergeAjax.ajaxUrl,
+						method: 'GET',
+						dataType: 'json',
+						data: {
+							action: 'sp_search_players',
+							nonce: spMergeAjax.nonce,
+							search: search || ''
+						}
+					} ).done( function( response ) {
+						if ( response.success && response.data && response.data.results ) {
+							resolve( response.data.results.map( function( item ) {
+								return { value: String( item.id ), text: item.text };
+							} ) );
+							return;
+						}
 
-			$( '#primary-player' ).select2( {
-				ajax: ajaxConfig,
-				placeholder: $( '#primary-player' ).data( 'placeholder' ),
-				allowClear: true,
-				minimumInputLength: 0,
-				width: '100%'
+						// A non-success envelope (an expired nonce, most often) looks
+						// identical to "no players match" if silently reduced to an
+						// empty result — the one search control the whole tool
+						// depends on failing with no visible signal. Surface it.
+						self.showMessage( 'error', ( response.data && response.data.message ) || 'Player search failed.' );
+						resolve( [] );
+					} ).fail( function() {
+						self.showMessage( 'error', 'Player search failed.' );
+						resolve( [] );
+					} );
+				} );
+			}
+
+			this.primarySelect = new SlimSelect( {
+				select: '#primary-player',
+				settings: {
+					placeholderText: $( '#primary-player' ).data( 'placeholder' ),
+					allowDeselect: true,
+					timeoutDelay: 300
+				},
+				events: {
+					search: searchPlayers
+				}
 			} );
 
-			$( '#duplicate-players' ).select2( {
-				ajax: ajaxConfig,
-				placeholder: $( '#duplicate-players' ).data( 'placeholder' ),
-				allowClear: true,
-				minimumInputLength: 0,
-				maximumSelectionLength: 10,
-				width: '100%'
+			this.duplicatesSelect = new SlimSelect( {
+				select: '#duplicate-players',
+				settings: {
+					placeholderText: $( '#duplicate-players' ).data( 'placeholder' ),
+					allowDeselect: true,
+					maxSelected: 10,
+					timeoutDelay: 300
+				},
+				events: {
+					search: searchPlayers
+				}
 			} );
 		},
 
@@ -464,8 +510,12 @@
 				$( '#execute-merge' ).prop( 'disabled', true );
 				this.showMessage( 'success', spMergeAjax.strings.mergeSuccess + ' Backup ID: ' + this.lastBackupId );
 
-				$( '#primary-player' ).val( '' );
-				$( '#duplicate-players' ).val( [] );
+				// setSelected(), not .val(): SlimSelect renders its own UI over
+				// the real <select>, so writing the native value directly would
+				// clear the underlying element without the visible dropdown
+				// ever catching up.
+				this.primarySelect.setSelected( [] );
+				this.duplicatesSelect.setSelected( [] );
 				$( '#merge-preview-card' ).hide();
 
 				this.updateBackupButtonStates();
@@ -915,18 +965,19 @@
 				return parts.join( ' ' );
 			};
 
-			// Set primary player in Select2.
-			var $primary = $( '#primary-player' );
-			var primaryOption = new Option( buildLabel( primary ), primary.id, true, true );
-			$primary.append( primaryOption ).trigger( 'change' );
+			// Set the primary player. addOption() first: setSelected() only
+			// picks among options SlimSelect already knows about, and a group
+			// staged straight from the scan results was never searched for.
+			this.primarySelect.addOption( { value: String( primary.id ), text: buildLabel( primary ) } );
+			this.primarySelect.setSelected( String( primary.id ) );
 
-			// Set duplicate players in Select2.
-			var $duplicates = $( '#duplicate-players' );
-			$duplicates.val( null ).trigger( 'change' );
+			// Set the duplicate players.
+			var duplicateValues = [];
 			for ( var i = 0; i < duplicates.length; i++ ) {
-				var dupOption = new Option( buildLabel( duplicates[i] ), duplicates[i].id, true, true );
-				$duplicates.append( dupOption ).trigger( 'change' );
+				this.duplicatesSelect.addOption( { value: String( duplicates[i].id ), text: buildLabel( duplicates[i] ) } );
+				duplicateValues.push( String( duplicates[i].id ) );
 			}
+			this.duplicatesSelect.setSelected( duplicateValues );
 
 			this.showMessage(
 				'info',
