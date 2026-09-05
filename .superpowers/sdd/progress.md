@@ -101,3 +101,34 @@ plus a missing /* translators: */ comment — both fixed directly in commit
 
 Full suite green throughout (28 test files, 640+ checks). All work pushed;
 PR #39 remains open for CI + manual wp-binary sanity check before merge.
+
+--- Complexity-reduction pass (Codacy gate on PR #39) ---
+
+Codacy's PHPMD/Lizard check blocked the PR on four excessively complex
+methods plus SP_Merge_CLI's class-level size. Pure restructuring, no behavior
+change (commits 7ba2840, 6650934):
+
+- batch() and its exclusive helpers moved whole to a new SP_Merge_CLI_Batch,
+  registered at `sp-merge batch` via an __invoke() leaf (WP-CLI registers a
+  class carrying one as that single command, so no `batch batch` and no helper
+  leaks out as a subcommand). CCN 27 -> 1.
+- run_one_merge() stays on SP_Merge_CLI, now public static (public so the
+  batch class can call it, static so WP-CLI's method mapping — which skips
+  static methods — cannot turn it into `wp sp-merge run-one-merge`), split
+  into preview/warning-gate/question/report phases. CCN 14 -> 6.
+- scan() split into option-reading, cache-priming, ranking, coverage. 14 -> 2.
+- apply_certainty_adjustments() split into the three named signals plus one
+  shared adjust_score(). CCN 14 -> 4.
+
+PHPMD after: no CyclomaticComplexity, NPathComplexity, ExcessiveMethodLength
+or ExcessiveClassLength finding on any of the four; SP_Merge_CLI's class
+complexity 125 -> 80. Still over PHPMD's ExcessiveClassComplexity threshold of
+50: SP_Merge_CLI 80, SP_Merge_CLI_Batch 59, SP_Merge_Validation 58 (56 before
+this pass — it was already flagged). Clearing those needs further class
+splits, not further method extraction; see
+.superpowers/sdd/complexity-reduction-report.md for the exact candidates.
+
+The certainty-adjustment extraction is the shared AJAX/CLI path, so it was
+proven byte-identical against a pristine f30625d export: 1,241,487 direct
+cases hashed plus ten full find_duplicates() payloads and scan row sets,
+sha256 identical on both sides. Full suite green (28 files, 645 checks).
