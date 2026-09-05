@@ -199,6 +199,27 @@ try {
 }
 sp_assert( null === $threw, 'a valid --min-certainty/--limit still runs' . ( $threw ? ' (' . $threw->getMessage() . ')' : '' ) );
 
+/* 5c. A typo'd --scenario refuses instead of silently returning zero rows. */
+$threw = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array( 'scenario' => 'exakt' ) );
+} catch ( SP_Test_CLI_Error $e ) {
+	$threw = $e;
+}
+sp_assert( null !== $threw, "--scenario=exakt refuses instead of silently returning zero rows" );
+sp_assert_contains( '--scenario', $threw ? $threw->getMessage() : '', 'the refusal names --scenario' );
+sp_assert_contains( 'exakt', $threw ? $threw->getMessage() : '', 'the refusal echoes back the bad value' );
+
+/* A valid --scenario still runs normally. */
+$GLOBALS['spm_cli_log'] = array();
+$threw                  = null;
+try {
+	( new SP_Merge_CLI() )->scan( array(), array( 'scenario' => 'typo' ) );
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+sp_assert( null === $threw, 'a valid --scenario still runs' . ( $threw ? ' (' . $threw->getMessage() . ')' : '' ) );
+
 /* 6. Lacking edit_sp_players refuses the scan outright, before touching the roster. */
 sp_test_cli_reset();
 $GLOBALS['sp_denied_caps'] = array( 'edit_sp_players' );

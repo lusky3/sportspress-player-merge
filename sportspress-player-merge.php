@@ -144,6 +144,7 @@ class SportsPress_Player_Merge_Init {
 		}
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-support.php';
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli.php';
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-backups.php';
 			require_once SP_MERGE_PLUGIN_PATH . 'classes/class-sp-merge-cli-batch.php';

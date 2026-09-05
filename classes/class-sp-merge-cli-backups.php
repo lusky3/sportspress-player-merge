@@ -34,6 +34,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SP_Merge_CLI_Backups {
 
 	/**
+	 * Every status a backup row can carry — used only to reject a typo'd
+	 * --status value with a clear error instead of silently returning zero
+	 * rows.
+	 *
+	 * @var string[]
+	 */
+	private const VALID_STATUSES = array( 'pending', 'active', 'failed', 'reverted' );
+
+	/**
 	 * List recent merge backups.
 	 *
 	 * Everyone with edit_sp_players can list their own backups; seeing every
@@ -89,19 +98,33 @@ class SP_Merge_CLI_Backups {
 			);
 		}
 
-		$user_id = $all_users ? null : SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
+		$user_id = $all_users ? null : SP_Merge_CLI_Support::resolve_target_user( $assoc_args['owner'] ?? null );
 		$status  = $assoc_args['status'] ?? null;
 		$format  = $assoc_args['format'] ?? 'table';
 		$admin   = new SP_Merge_Admin();
+
+		if ( null !== $status && ! in_array( $status, self::VALID_STATUSES, true ) ) {
+			\WP_CLI::error(
+				sprintf(
+					/* translators: 1: the invalid --status value, 2: comma-separated list of valid status names */
+					__( 'Unknown --status "%1$s". Valid statuses: %2$s.', 'sportspress-player-merge' ),
+					$status,
+					implode( ', ', self::VALID_STATUSES )
+				)
+			);
+		}
+
+		// 200 matches SP_Merge_Admin::MAX_LISTED_BACKUPS, the default get_recent_backups()
+		// itself would apply — this option isn't its own source of truth for that number,
+		// just the last place it has to be written down before the call.
+		$limit = SP_Merge_CLI_Support::int_option( $assoc_args, 'limit', 200, 1, PHP_INT_MAX, __( '--limit must be a positive integer.', 'sportspress-player-merge' ) );
 
 		// Pre-set so the catch below can hand control to WP_CLI::error() (which
 		// exits the process) without leaving a possibly-undefined read after it.
 		$backups = false;
 
 		try {
-			$backups = isset( $assoc_args['limit'] )
-				? $admin->get_recent_backups( (int) $assoc_args['limit'], $user_id, $all_users, $status )
-				: $admin->get_recent_backups( user_id: $user_id, all_users: $all_users, status: $status );
+			$backups = $admin->get_recent_backups( $limit, $user_id, $all_users, $status );
 		} catch ( Throwable $e ) {
 			// Throwable, not Exception: the rows being read carry decade-old
 			// serialized payloads, and malformed data raises a TypeError, which is
@@ -195,7 +218,7 @@ class SP_Merge_CLI_Backups {
 		// The helper's own capability check always passes here — delete_sp_players
 		// was already required above — but it still resolves --owner consistently
 		// with every other subcommand, so it is reused rather than duplicated.
-		$owner_id = SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
+		$owner_id = SP_Merge_CLI_Support::resolve_target_user( $assoc_args['owner'] ?? null );
 
 		\WP_CLI::warning( __( 'Deleting a backup permanently removes the only recovery path for that merge.', 'sportspress-player-merge' ) );
 		\WP_CLI::confirm(

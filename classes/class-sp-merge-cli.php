@@ -43,6 +43,28 @@ class SP_Merge_CLI {
 	private const SCAN_FIELDS = array( 'group_certainty', 'scenario', 'player_id', 'name', 'member_certainty', 'events' );
 
 	/**
+	 * Every scenario name SP_Merge_Name_Matcher::compare() can return. Must be
+	 * kept in sync with that method's own 'scenario' literals — used only to
+	 * reject a typo'd --scenario value with a clear error instead of silently
+	 * returning zero rows.
+	 *
+	 * @var string[]
+	 */
+	private const VALID_SCENARIOS = array(
+		'exact',
+		'normalization',
+		'reversal',
+		'french_compound',
+		'nickname',
+		'nickname+typo',
+		'nickname+compound',
+		'typo',
+		'initial',
+		'middle_name',
+		'compound_last',
+	);
+
+	/**
 	 * Scan the roster for duplicate players.
 	 *
 	 * Runs the same fuzzy name matcher the admin screen's duplicate scan uses,
@@ -89,8 +111,19 @@ class SP_Merge_CLI {
 			\WP_CLI::error( __( 'Insufficient permissions.', 'sportspress-player-merge' ) );
 		}
 
-		$min_certainty = $this->scan_int_option( $assoc_args, 'min-certainty', 0, 0, 100, __( '--min-certainty must be an integer between 0 and 100.', 'sportspress-player-merge' ) );
-		$limit         = $this->scan_int_option( $assoc_args, 'limit', 50, 1, PHP_INT_MAX, __( '--limit must be a positive integer.', 'sportspress-player-merge' ) );
+		$min_certainty = SP_Merge_CLI_Support::int_option( $assoc_args, 'min-certainty', 0, 0, 100, __( '--min-certainty must be an integer between 0 and 100.', 'sportspress-player-merge' ) );
+		$limit         = SP_Merge_CLI_Support::int_option( $assoc_args, 'limit', 50, 1, PHP_INT_MAX, __( '--limit must be a positive integer.', 'sportspress-player-merge' ) );
+
+		if ( isset( $assoc_args['scenario'] ) && ! in_array( $assoc_args['scenario'], self::VALID_SCENARIOS, true ) ) {
+			\WP_CLI::error(
+				sprintf(
+					/* translators: 1: the invalid --scenario value, 2: comma-separated list of valid scenario names */
+					__( 'Unknown --scenario "%1$s". Valid scenarios: %2$s.', 'sportspress-player-merge' ),
+					$assoc_args['scenario'],
+					implode( ', ', self::VALID_SCENARIOS )
+				)
+			);
+		}
 
 		$scan   = ( new SP_Merge_Ajax() )->collect_scan_players();
 		$groups = SP_Merge_Name_Matcher::find_groups( $scan['players'] );
@@ -107,37 +140,6 @@ class SP_Merge_CLI {
 		\WP_CLI\Utils\format_items( $assoc_args['format'] ?? 'table', $this->flatten_scan_groups( $groups ), self::SCAN_FIELDS );
 
 		$this->report_scan_coverage( $scan );
-	}
-
-	/**
-	 * Read one of scan's integer options, refusing anything that is not one.
-	 *
-	 * Validated as a digit string, not just cast: (int) silently reads a garbage
-	 * value like "abc" as 0 and "-1" as -1, so --min-certainty=abc used to filter
-	 * as if it meant 0 and --limit=-1 used to produce an empty result with no
-	 * explanation — either one is a silent misread on a command that permanently
-	 * deletes posts, not a value worth guessing at.
-	 *
-	 * @param array  $assoc_args Associative arguments as passed to scan().
-	 * @param string $key        Option name.
-	 * @param int    $fallback   Value when the option was not passed at all.
-	 * @param int    $min        Lowest accepted value.
-	 * @param int    $max        Highest accepted value.
-	 * @param string $error      Operator-facing refusal describing the accepted range.
-	 * @return int
-	 */
-	private function scan_int_option( array $assoc_args, string $key, int $fallback, int $min, int $max, string $error ): int {
-		if ( ! isset( $assoc_args[ $key ] ) ) {
-			return $fallback;
-		}
-
-		$raw = (string) $assoc_args[ $key ];
-
-		if ( 1 !== preg_match( '/^\d+$/', $raw ) || (int) $raw < $min || (int) $raw > $max ) {
-			\WP_CLI::error( $error );
-		}
-
-		return (int) $raw;
 	}
 
 	/**
@@ -888,7 +890,7 @@ class SP_Merge_CLI {
 			\WP_CLI::error( __( 'Usage: wp sp-merge revert <backup-id>', 'sportspress-player-merge' ) );
 		}
 
-		$owner_id = SP_Merge_Validation::resolve_target_user( $assoc_args['owner'] ?? null );
+		$owner_id = SP_Merge_CLI_Support::resolve_target_user( $assoc_args['owner'] ?? null );
 		$backup   = new SP_Merge_Backup();
 
 		// Always the first call, whether or not --force was passed: it either
