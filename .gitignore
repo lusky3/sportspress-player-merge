@@ -27,7 +27,13 @@ npm-debug.log
 # Composer
 # composer.lock is committed deliberately (dev-only tooling, pinned for
 # reproducible CI installs) — only the installed packages are ignored.
-vendor/
+# Anchored to the repo root: an unanchored `vendor/` also matched
+# assets/vendor/select2/ (the bundled, deliberately-committed Select2 library)
+# for this repo's entire history, silently blackholing it from every `git add`
+# — every real release has shipped with a broken admin UI as a result
+# (Select2 undefined, both player-picker dropdowns inert) because the vendor
+# bundle the code references was never actually in version control.
+/vendor/
 
 # Build files
 build/
