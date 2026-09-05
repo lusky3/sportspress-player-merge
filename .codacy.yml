@@ -1,0 +1,7 @@
+---
+# composer.lock is a machine-generated dependency lockfile (JSON), not source
+# code. Codacy's file-type detection was misreading it as PHP and flagging its
+# raw line count as excessive "complexity" — a false positive on a file that
+# is never hand-written or hand-edited.
+exclude_paths:
+  - "composer.lock"

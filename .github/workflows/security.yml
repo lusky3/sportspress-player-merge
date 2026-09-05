@@ -64,6 +64,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.2'
+          coverage: pcov
+      - name: Install coverage tooling
+        run: composer install --no-interaction --prefer-dist
+      - name: Generate coverage report
+        # sonar.php.coverage.reportPaths (sonar-project.properties) reads
+        # coverage/clover.xml from this same checkout — this workflow runs in a
+        # separate job/checkout from Lint's Codecov upload, so it has to
+        # regenerate the report here rather than share one across workflow
+        # files.
+        run: bash tests/run-coverage.sh
       # CVE-2025-59844: argument injection in sonarqube-scan-action >= 4.0.0, < 6.0.0.
       # SHA-pinned rather than tag-tracked so the resolved code cannot change under us.
       - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
