@@ -21,20 +21,85 @@ jobs:
         with:
           php-version: '8.4'
 
-      - name: Validate version consistency
+      - name: Validate version and changelog consistency
+        # Guards against shipping a release where the version wasn't actually
+        # bumped and/or nobody documented what changed — both of which have
+        # happened on this plugin before (the very tag this guard was added
+        # under, v1.2.0, points at a commit from months earlier; the plugin
+        # header still reads 1.2.0 with none of the work merged since then
+        # reflected in it, and readme.txt's changelog has never carried an
+        # entry for that version at all). Every check below must pass before
+        # the build/publish steps run.
         run: |
+          set -euo pipefail
+
           TAG_VERSION="${GITHUB_REF_NAME#v}"
+          ESCAPED_VERSION=$(printf '%s' "$TAG_VERSION" | sed 's/[.[\*^$/]/\\&/g')
+
           PLUGIN_FILE=$(find . -maxdepth 1 -name '*.php' -exec grep -l 'Plugin Name:' {} \; | head -1)
           if [ -z "$PLUGIN_FILE" ]; then
             echo "::error::No main plugin file found"
             exit 1
           fi
+
+          # 1. The plugin header's Version must match the tag (pre-existing check).
           FILE_VERSION=$(grep -oP 'Version:\s*\K[0-9.]+' "$PLUGIN_FILE")
           if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match plugin version ($FILE_VERSION)"
+            echo "::error::Tag version ($TAG_VERSION) does not match plugin version ($FILE_VERSION) in $PLUGIN_FILE"
             exit 1
           fi
-          echo "Version $TAG_VERSION validated"
+
+          # 2. readme.txt's Stable tag must match too — WordPress.org reads that
+          #    field, not the plugin header, to decide what version is "current".
+          README_STABLE=$(grep -oP '^Stable tag:\s*\K[0-9.]+' readme.txt || true)
+          if [ "$TAG_VERSION" != "$README_STABLE" ]; then
+            echo "::error::readme.txt's Stable tag ($README_STABLE) does not match tag version ($TAG_VERSION)"
+            exit 1
+          fi
+
+          # 3. readme.txt's == Changelog == section must document this exact
+          #    version — not just an unpromoted "= Unreleased =" entry.
+          if ! grep -qE "^= ${ESCAPED_VERSION} =\$" readme.txt; then
+            echo "::error::readme.txt has no '= ${TAG_VERSION} =' changelog entry. Promote the Unreleased entry (or add one) before tagging."
+            exit 1
+          fi
+
+          # 4. changelog.txt must document this exact version too, in its own
+          #    '## Version X.Y.Z' convention (an optional ' - Title' suffix is
+          #    allowed, matching how every prior entry in the file is written).
+          if ! grep -qE "^## Version ${ESCAPED_VERSION}( |\$)" changelog.txt; then
+            echo "::error::changelog.txt has no '## Version ${TAG_VERSION}' entry. Promote the Unreleased entry (or add one) before tagging."
+            exit 1
+          fi
+
+          # 5. The version must have actually moved since the previous release
+          #    tag — re-tagging the same version number is exactly the bug this
+          #    guard exists to catch, not a hygiene nicety.
+          PREV_TAG=$(git tag --sort=-v:refname | grep -vx "$GITHUB_REF_NAME" | head -1 || true)
+          if [ -n "$PREV_TAG" ]; then
+            PREV_VERSION="${PREV_TAG#v}"
+            if [ "$PREV_VERSION" = "$TAG_VERSION" ]; then
+              echo "::error::Version $TAG_VERSION is identical to the previous release ($PREV_TAG). Bump the version before releasing."
+              exit 1
+            fi
+
+            # 6. Both changelog files must have actually been touched since
+            #    that previous release — not merely contain a heading that
+            #    happens to match (belt-and-suspenders against hand-editing
+            #    only one of the two, or copy-pasting a heading with no body).
+            if git diff --quiet "$PREV_TAG" HEAD -- changelog.txt; then
+              echo "::error::changelog.txt has no changes since $PREV_TAG. Document this release before tagging."
+              exit 1
+            fi
+            if git diff --quiet "$PREV_TAG" HEAD -- readme.txt; then
+              echo "::error::readme.txt has no changes since $PREV_TAG. Document this release before tagging."
+              exit 1
+            fi
+          else
+            echo "::notice::No previous release tag found — skipping the version-moved/changelog-diff checks (first release)."
+          fi
+
+          echo "Version $TAG_VERSION validated: plugin header, readme.txt Stable tag, and both changelogs agree."
 
       - name: Install composer dependencies
         run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader 2>/dev/null || true
@@ -71,9 +136,13 @@ jobs:
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.kiro' \
+            --exclude='.superpowers' \
+            --exclude='docs' \
             --exclude='node_modules' \
             --exclude='tests' \
-            --exclude='vendor/bin' \
+            --exclude='coverage' \
+            --exclude='.coverage-raw' \
+            --exclude='vendor' \
             . "$PLUGIN_SLUG/"
           zip -r "${PLUGIN_SLUG}.zip" "$PLUGIN_SLUG"
           echo "ZIP_FILE=${PLUGIN_SLUG}.zip" >> "$GITHUB_ENV"

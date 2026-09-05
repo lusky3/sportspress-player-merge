@@ -133,6 +133,10 @@ function __( $text, $domain = '' ) {
 	return $text;
 }
 
+function absint( $maybeint ) {
+	return abs( (int) $maybeint );
+}
+
 function get_post_meta( $post_id, $key = '', $single = false ) {
 	$post_id = (int) $post_id;
 	spm_maybe_throw( 'get_post_meta', $post_id );
@@ -458,4 +462,14 @@ function spm_invoke( SP_Merge_Processor $processor, string $method, ...$args ) {
 
 spm_reset();
 
+/*
+ * Both are real dependencies of the class under test, not stand-ins:
+ * execute_merge() takes the lock through SP_Merge_Lock and re-validates its own
+ * selection through SP_Merge_Validation once it holds it (closing the window in
+ * which a concurrent operation deletes a duplicate between the caller's
+ * validation and the merge). Fixtures below therefore have to register the
+ * players a merge is asked to operate on, as a real install would.
+ */
+require_once dirname( __DIR__ ) . '/classes/class-sp-merge-lock.php';
+require_once dirname( __DIR__ ) . '/classes/class-sp-merge-validation.php';
 require_once dirname( __DIR__ ) . '/classes/class-sp-merge-processor.php';

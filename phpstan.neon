@@ -10,6 +10,8 @@ parameters:
     - uninstall.php
   bootstrapFiles:
     - phpstan-bootstrap.php
+  scanFiles:
+    - %rootDir%/../../php-stubs/wp-cli-stubs/wp-cli-stubs.php
   reportUnmatchedIgnoredErrors: false
   ignoreErrors:
     - '#Function apply_filters invoked with#'
@@ -19,3 +21,11 @@ parameters:
     - '#never returns .* so it can be removed#'
     - '#is unused#'
     - '#Parameter .* of function array_filter expects#'
+    -
+      # includes/admin-page.php is a template, `include_once`'d from inside
+      # SP_Merge_Admin::render_admin_page() so `$this` resolves at runtime to
+      # that instance. PHPStan analyses the file standalone and can't see the
+      # including scope — a false positive inherent to this WordPress
+      # template-include pattern, not a real undefined-variable bug.
+      message: '#Variable \$this might not be defined#'
+      path: includes/admin-page.php

@@ -25,12 +25,18 @@ node_modules/
 npm-debug.log
 
 # Composer
+# composer.lock is committed deliberately (dev-only tooling, pinned for
+# reproducible CI installs) — only the installed packages are ignored.
 vendor/
-composer.lock
 
 # Build files
 build/
 dist/
+
+# Generated coverage output (tests/run-coverage.sh). Anchored to the repo
+# root so this doesn't also swallow bin/coverage/ (the scripts that produce it).
+/coverage/
+/.coverage-raw/
 
 # Environment files
 .env
@@ -38,3 +44,4 @@ dist/
 .env.production
 .playwright-mcp/
 .kiro/
+.superpowers/

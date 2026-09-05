@@ -27,12 +27,6 @@ class SP_Merge_Ajax {
 	private const SCAN_PAGE_SIZE = 500;
 
 	/**
-	 * A duplicate carrying at least this multiple of the primary's event count
-	 * makes the survivor choice worth questioning.
-	 */
-	private const HISTORY_WARNING_RATIO = 2;
-
-	/**
 	 * Handle preview merge request.
 	 */
 	public function preview_merge(): void {
@@ -54,7 +48,7 @@ class SP_Merge_Ajax {
 					'preview'  => $preview_data,
 					// Binds the execution that follows to exactly this selection.
 					'token'    => self::selection_token( $input['primary_id'], $input['duplicate_ids'] ),
-					'warnings' => $this->survivor_warnings( $input['primary_id'], $input['duplicate_ids'] ),
+					'warnings' => SP_Merge_Validation::survivor_warnings( $input['primary_id'], $input['duplicate_ids'] ),
 				)
 			);
 		} catch ( Throwable $e ) {
@@ -126,9 +120,7 @@ class SP_Merge_Ajax {
 			if ( $result['success'] ) {
 				wp_send_json_success(
 					array(
-						'message' => $force
-							? __( 'Merge reverted using the override. Values changed since the merge were discarded.', 'sportspress-player-merge' )
-							: __( 'Merge reverted successfully', 'sportspress-player-merge' ),
+						'message' => SP_Merge_Validation::revert_success_message( $force ),
 					)
 				);
 			} else {
@@ -227,43 +219,15 @@ class SP_Merge_Ajax {
 			return false;
 		}
 
-		$duplicate_ids = array_unique( array_map( 'absint', $raw_duplicates ) );
-		$duplicate_ids = array_values( array_filter( $duplicate_ids ) );
-
-		if ( ! $primary_id || empty( $duplicate_ids ) ) {
-			$this->send_error( __( 'Invalid player selection', 'sportspress-player-merge' ) );
+		$result = SP_Merge_Validation::validate_merge_selection( $primary_id, $raw_duplicates );
+		if ( ! $result['valid'] ) {
+			$this->send_error( $result['error'] );
 			return false;
-		}
-
-		// Limit number of duplicates per merge.
-		if ( count( $duplicate_ids ) > 10 ) {
-			$this->send_error( __( 'Maximum 10 duplicate players per merge operation.', 'sportspress-player-merge' ) );
-			return false;
-		}
-
-		// Prevent merging a player into itself.
-		if ( in_array( $primary_id, $duplicate_ids, true ) ) {
-			$this->send_error( __( 'Primary player cannot also be a duplicate', 'sportspress-player-merge' ) );
-			return false;
-		}
-
-		$primary_post = get_post( $primary_id );
-		if ( ! $primary_post || 'sp_player' !== $primary_post->post_type || 'publish' !== $primary_post->post_status ) {
-			$this->send_error( __( 'Primary player not found or not published', 'sportspress-player-merge' ) );
-			return false;
-		}
-
-		foreach ( $duplicate_ids as $dup_id ) {
-			$dup_post = get_post( $dup_id );
-			if ( ! $dup_post || 'sp_player' !== $dup_post->post_type || 'publish' !== $dup_post->post_status ) {
-				$this->send_error( __( 'One or more duplicate players not found or not published', 'sportspress-player-merge' ) );
-				return false;
-			}
 		}
 
 		return array(
-			'primary_id'    => $primary_id,
-			'duplicate_ids' => $duplicate_ids,
+			'primary_id'    => $result['primary_id'],
+			'duplicate_ids' => $result['duplicate_ids'],
 		);
 	}
 
@@ -305,79 +269,6 @@ class SP_Merge_Ajax {
 		}
 
 		return true;
-	}
-
-	/**
-	 * Count the events each player appears in.
-	 *
-	 * @param int[] $player_ids Player IDs.
-	 * @return array<int, int> Player ID => event count, zero-filled.
-	 */
-	private function get_event_counts( array $player_ids ): array {
-		global $wpdb;
-
-		$player_ids = array_values( array_unique( array_filter( array_map( 'intval', $player_ids ) ) ) );
-		if ( empty( $player_ids ) ) {
-			return array();
-		}
-
-		$counts       = array_fill_keys( $player_ids, 0 );
-		$placeholders = implode( ',', array_fill( 0, count( $player_ids ), '%s' ) );
-
-		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				"SELECT pm.meta_value AS player_id, COUNT(*) AS cnt FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON pm.post_id = p.ID WHERE p.post_type = 'sp_event' AND pm.meta_key = 'sp_player' AND pm.meta_value IN ($placeholders) GROUP BY pm.meta_value",
-				...$player_ids
-			)
-		);
-
-		foreach ( (array) $rows as $row ) {
-			$counts[ (int) $row->player_id ] = (int) $row->cnt;
-		}
-
-		return $counts;
-	}
-
-	/**
-	 * Warn when the chosen survivor holds much less history than a duplicate.
-	 *
-	 * The merge keeps the primary and permanently deletes the duplicates, so
-	 * picking the emptier record is the expensive mistake to make.
-	 *
-	 * @param int   $primary_id    Primary player ID.
-	 * @param int[] $duplicate_ids Duplicate player IDs.
-	 * @return string[] Operator-facing warnings; empty when the choice looks sound.
-	 */
-	private function survivor_warnings( int $primary_id, array $duplicate_ids ): array {
-		$counts        = $this->get_event_counts( array_merge( array( $primary_id ), $duplicate_ids ) );
-		$primary_count = $counts[ $primary_id ] ?? 0;
-		$warnings      = array();
-
-		foreach ( $duplicate_ids as $duplicate_id ) {
-			$duplicate_count = $counts[ (int) $duplicate_id ] ?? 0;
-
-			if ( $duplicate_count <= $primary_count ) {
-				continue;
-			}
-
-			// "Substantially": the survivor has no history at all, or the
-			// duplicate carries at least twice as much.
-			if ( 0 !== $primary_count && $duplicate_count < $primary_count * self::HISTORY_WARNING_RATIO ) {
-				continue;
-			}
-
-			$warnings[] = sprintf(
-				/* translators: 1: duplicate player name, 2: duplicate event count, 3: primary player name, 4: primary event count */
-				__( '%1$s appears in %2$d event(s) but is about to be deleted into %3$s, which appears in %4$d. The record with the longer history is usually the one to keep.', 'sportspress-player-merge' ),
-				get_the_title( (int) $duplicate_id ),
-				$duplicate_count,
-				get_the_title( $primary_id ),
-				$primary_count
-			);
-		}
-
-		return $warnings;
 	}
 
 	/**
@@ -589,46 +480,43 @@ class SP_Merge_Ajax {
 				$matched_ids[] = (int) $this->member_value( $p, 'ID', 0 );
 			}
 		}
-		$event_counts = $this->get_event_counts( $matched_ids );
+		$event_counts = SP_Merge_Validation::get_event_counts( $matched_ids );
 
 		$groups = array();
 		foreach ( $matched_groups as $mg ) {
 			$details = array();
-			$teams   = array();
+			$members = array();
 			foreach ( $mg['players'] as $p ) {
 				$player_id = (int) $this->member_value( $p, 'ID', 0 );
 				if ( ! $player_id ) {
 					continue;
 				}
 
-				$team    = '';
-				$team_id = 0;
-				$t_ids   = get_post_meta( $player_id, 'sp_current_team' );
-				foreach ( array_reverse( $t_ids ) as $tid ) {
-					if ( $tid && '0' !== $tid ) {
-						$t = get_post( (int) $tid );
-						if ( $t && 'sp_team' === $t->post_type ) {
-							$team    = $t->post_title;
-							$team_id = $t->ID;
-							break;
-						}
-					}
-				}
-				$teams[]   = $team_id;
-				$events    = $event_counts[ $player_id ] ?? 0;
-				$positions = wp_get_post_terms( $player_id, 'sp_position', array( 'fields' => 'names' ) );
-				$position  = is_array( $positions ) && ! empty( $positions ) ? implode( ', ', $positions ) : '';
+				// Team, position and email are read through the shared helper so
+				// `wp sp-merge scan` cannot end up scoring the same group from
+				// differently-read signals.
+				$signals = SP_Merge_Validation::certainty_signals( $player_id );
+
+				// Null when the matcher supplied none; the UI then treats the
+				// member as low confidence and leaves it unchecked.
+				$certainty = $this->member_certainty( $p, $mg, $player_id );
+
 				$details[] = array(
 					'id'        => $player_id,
 					'name'      => (string) $this->member_value( $p, 'post_title', '' ),
-					'team'      => $team,
-					'position'  => $position,
-					'events'    => $events,
-					'email'     => get_post_meta( $player_id, 'spt_email', true ) ?: '',
-					// Null when the matcher supplied none; the UI then treats the
-					// member as low confidence and leaves it unchecked.
-					'certainty' => $this->member_certainty( $p, $mg, $player_id ),
+					'team'      => $signals['team'],
+					'position'  => $signals['position'],
+					'events'    => $event_counts[ $player_id ] ?? 0,
+					'email'     => $signals['email'],
+					'certainty' => $certainty,
 					'edit_link' => get_edit_post_link( $player_id, 'raw' ),
+				);
+
+				$members[] = array(
+					'email'     => $signals['email'],
+					'position'  => $signals['position'],
+					'team_id'   => $signals['team_id'],
+					'certainty' => $certainty,
 				);
 			}
 
@@ -636,53 +524,14 @@ class SP_Merge_Ajax {
 				continue;
 			}
 
-			$certainty = (int) ( $mg['certainty'] ?? 0 );
+			// The email boost, team boost and position penalty all live on
+			// SP_Merge_Validation now, so the browser's badge and the CLI's
+			// --min-certainty filter are the same number by construction.
+			$adjusted  = SP_Merge_Validation::apply_certainty_adjustments( $mg, $members );
+			$certainty = $adjusted['certainty'];
 
-			// Boost certainty when players share the same email address. Only the
-			// members actually holding that address earn the per-member boost.
-			$emails       = array_filter( array_column( $details, 'email' ), 'strlen' );
-			$shared_email = '';
-			if ( count( $emails ) >= 2 && count( array_unique( $emails ) ) === 1 ) {
-				$shared_email = (string) reset( $emails );
-				$certainty    = min( 100, $certainty + 20 );
-			}
-
-			// Boost certainty when all players share the same team.
-			$team_boost = false;
-			$team_ids   = array_filter( $teams );
-			if ( ! empty( $team_ids ) && count( array_unique( $team_ids ) ) === 1 && count( $team_ids ) === count( $details ) ) {
-				$team_boost = true;
-				$certainty  = min( 100, $certainty + 5 );
-			}
-
-			// Reduce certainty when players have different positions.
-			$position_penalty = false;
-			$all_positions    = array_column( $details, 'position' );
-			$all_positions    = array_filter( $all_positions, 'strlen' );
-			if ( count( $all_positions ) >= 2 && count( array_unique( $all_positions ) ) > 1 ) {
-				$position_penalty = true;
-				$certainty        = max( 50, $certainty - 20 );
-			}
-
-			// Apply the same signals to each member's own score so the per-member
-			// checkboxes and the group badge cannot tell different stories.
-			foreach ( $details as $index => $detail ) {
-				if ( null === $detail['certainty'] ) {
-					continue;
-				}
-
-				$member = $detail['certainty'];
-				if ( '' !== $shared_email && $detail['email'] === $shared_email ) {
-					$member = min( 100, $member + 20 );
-				}
-				if ( $team_boost ) {
-					$member = min( 100, $member + 5 );
-				}
-				if ( $position_penalty ) {
-					$member = max( 50, $member - 20 );
-				}
-
-				$details[ $index ]['certainty'] = $member;
+			foreach ( $adjusted['members'] as $index => $member ) {
+				$details[ $index ]['certainty'] = $member['certainty'];
 			}
 
 			$groups[] = array(
@@ -744,7 +593,7 @@ class SP_Merge_Ajax {
 
 		// Event counts make the survivor choice visible: without them a 2016
 		// record with a decade of history and an empty 2026 one look identical.
-		$event_counts = $this->get_event_counts( wp_list_pluck( $players, 'ID' ) );
+		$event_counts = SP_Merge_Validation::get_event_counts( wp_list_pluck( $players, 'ID' ) );
 
 		foreach ( $players as $player ) {
 			$team = '';
