@@ -32,9 +32,17 @@ spm_reset(
 	)
 );
 
+// Both players registered and published — execute_merge() re-validates its own
+// selection under the lock before it merges anything.
+$GLOBALS['spm_posts'][100]  = (object) array(
+	'ID'          => 100,
+	'post_type'   => 'sp_player',
+	'post_status' => 'publish',
+);
 $GLOBALS['spm_posts'][200]  = (object) array(
-	'ID'        => 200,
-	'post_type' => 'sp_player',
+	'ID'          => 200,
+	'post_type'   => 'sp_player',
+	'post_status' => 'publish',
 );
 $GLOBALS['wpdb']->col_queue = array(
 	array(),

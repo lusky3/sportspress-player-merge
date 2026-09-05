@@ -63,6 +63,34 @@ Scoring adjustments: +5% same team, -20% different positions, +20% matching emai
 
 Editors can browse and preview potential merges. League Managers can execute and revert merges. Only Administrators can permanently delete backup data.
 
+## WP-CLI
+
+The same merge/revert/backup functionality is available headless via `wp sp-merge`, for scripting and bulk operations the admin screen isn't built for:
+
+| Subcommand | Description |
+|------------|-------------|
+| `wp sp-merge scan` | Run the duplicate-name scan and print matched groups, filterable by certainty/scenario. |
+| `wp sp-merge preview` | Show what a merge of an explicit player selection would do, without executing it. |
+| `wp sp-merge merge` | Execute a merge of an explicit player selection. |
+| `wp sp-merge revert` | Revert a previously executed merge from its backup ID. |
+| `wp sp-merge backups list` | List recent merge backups. |
+| `wp sp-merge backups delete` | Permanently delete one or more merge backups. |
+| `wp sp-merge batch` | Run many merges from a CSV or JSON file in one pass, logging one record per row. Requires `--yes` — it is not interactive. |
+
+Run `wp help sp-merge <subcommand>` for full flag documentation.
+
+WP-CLI has no logged-in web session, so it relies entirely on its own global `--user=<id|login>` flag to set the *acting* identity — `current_user_can()` is checked exactly as it is for the AJAX-driven admin page. **Every** `wp sp-merge` subcommand requires `--user` to point at an account holding the relevant capability; without it, there is no logged-in user and the command refuses with "Insufficient permissions." The required capability varies by subcommand:
+
+| Capability | Subcommands |
+|-------------|-------------|
+| `edit_sp_players` | `scan`, `preview`, `backups list` (your own backups) |
+| `manage_sportspress` or `delete_sp_players` | `merge`, `revert`, `batch` |
+| `delete_sp_players` | `backups delete`, and `--owner`/`--all-users` on any subcommand that accepts them |
+
+For example: `wp sp-merge scan --user=admin`.
+
+`revert`, `backups list`, and `backups delete` additionally accept the plugin's own `--owner=<id|login>` flag, which is a completely different thing: it targets *whose* backup to act on, defaulting to the acting user's own backups. These are deliberately two separate flags rather than one, because WP-CLI's runtime consumes its own global `--user` before any command code runs — a command can never read `--user` back out of its arguments — so the plugin cannot reuse that name for a second, unrelated meaning. Targeting anyone else's backups via `--owner` requires the acting user (set by `--user`) to hold `delete_sp_players`. For example, an Administrator reverting a League Manager's merge runs `wp sp-merge revert merge_123 --user=admin --owner=league_manager_login`.
+
 ## File Structure
 
 ```text
@@ -77,10 +105,15 @@ sportspress-player-merge/
 │   ├── class-sp-merge-ajax.php           # AJAX handlers
 │   ├── class-sp-merge-backup.php         # Backup/restore system
 │   ├── class-sp-merge-controller.php     # Component coordinator
+│   ├── class-sp-merge-cli.php            # wp sp-merge scan/preview/merge/revert
+│   ├── class-sp-merge-cli-backups.php    # wp sp-merge backups list/delete
+│   ├── class-sp-merge-cli-batch.php      # wp sp-merge batch
 │   ├── class-sp-merge-github-updater.php # Auto-update from GitHub releases
+│   ├── class-sp-merge-lock.php           # The one lock a merge or revert holds
 │   ├── class-sp-merge-name-matcher.php   # Fuzzy matching engine (14 scenarios)
 │   ├── class-sp-merge-preview.php        # Merge preview generation
-│   └── class-sp-merge-processor.php      # Core merge logic
+│   ├── class-sp-merge-processor.php      # Core merge logic
+│   └── class-sp-merge-validation.php     # Selection validation, event counts, certainty adjustments
 ├── includes/
 │   └── admin-page.php       # Admin page template
 ├── languages/

@@ -43,9 +43,18 @@ function spm_seed_merge_fixture(): void {
 		)
 	);
 
+	// Both players are registered, published: execute_merge() re-validates its
+	// own selection once it holds the merge lock, so a fixture that never
+	// registered the primary would now be refused before the merge starts.
+	$GLOBALS['spm_posts'][100] = (object) array(
+		'ID'          => 100,
+		'post_type'   => 'sp_player',
+		'post_status' => 'publish',
+	);
 	$GLOBALS['spm_posts'][200] = (object) array(
-		'ID'        => 200,
-		'post_type' => 'sp_player',
+		'ID'          => 200,
+		'post_type'   => 'sp_player',
+		'post_status' => 'publish',
 	);
 
 	// get_col() order: events for the duplicate, sp_lists, then events for the

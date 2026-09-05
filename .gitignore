@@ -38,3 +38,4 @@ dist/
 .env.production
 .playwright-mcp/
 .kiro/
+.superpowers/

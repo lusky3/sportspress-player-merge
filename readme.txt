@@ -25,6 +25,7 @@ SportsPress Player Merge solves the common problem of duplicate players in Sport
 * **SportsPress Cache Clearing**: Automatically clears post caches, transients, and fires recalculation hooks after operations
 * **Security**: Nonce verification, capability checks (edit for read, delete for write), user-scoped backups, input sanitization, output escaping
 * **Accessibility**: ARIA dialog attributes, focus trapping, keyboard navigation on confirmation modals
+* **WP-CLI**: Scan, preview, merge, revert, batch-merge, and manage backups headlessly via `wp sp-merge` — the same functionality as the admin screen, for scripting and bulk operations
 
 = How It Works =
 
@@ -76,7 +77,19 @@ Statistics (sp_statistics), league assignments (sp_leagues), and display setting
 
 Event box scores (sp_players), timelines (sp_timeline), star selections (sp_stars), player ordering (sp_order), offense/defense assignments, all taxonomies (leagues, seasons, positions, roles), metrics, and team assignments.
 
+= Can I use this from the command line? =
+
+Yes. `wp sp-merge scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, and `batch` cover the same functionality headlessly, for scripting and bulk operations the admin screen isn't built for. WP-CLI has no logged-in web session, so every subcommand requires its own `--user=<id|login>` flag to set the acting identity, checked against the same capabilities the admin screen uses. See the plugin's README for the full command and capability reference.
+
 == Changelog ==
+
+= Unreleased =
+* New: `wp sp-merge` WP-CLI command family (`scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, `batch`) for headless and scripted merge/revert/backup operations. `batch` requires `--yes` — it confirms per row and is not interactive.
+* Fix: `wp sp-merge scan --min-certainty` now filters on the same adjusted certainty the admin screen shows, not the raw name-matcher score.
+* Fix: merge previews count only real sp_event posts, so two players sharing only a squad list are no longer reported as a same-event collision.
+* Fix: a revert now takes the same lock a merge takes, refusing while a merge or another revert is in progress.
+* Fix: a merge re-validates its selection after acquiring that lock.
+* Fix: `wp sp-merge batch` refuses malformed input rows, refuses a non-local or unreadable input path, and never writes a blank log line for an unencodable result. It also records the retained backup ID of a row whose merge failed.
 
 = 1.1.0 =
 * Fuzzy duplicate detection with 14 matching scenarios (nicknames, prefix normalization, typos, accents, bilingual equivalents, compound names, and more)
