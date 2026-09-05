@@ -4,7 +4,7 @@ Tags: sportspress, players, merge, duplicate, sports
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -83,13 +83,28 @@ Yes. `wp sp-merge scan`, `preview`, `merge`, `revert`, `backups list`, `backups 
 
 == Changelog ==
 
-= Unreleased =
+= 1.3.0 =
 * New: `wp sp-merge` WP-CLI command family (`scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, `batch`) for headless and scripted merge/revert/backup operations. `batch` requires `--yes` — it confirms per row and is not interactive.
+* Change: player-picker dropdowns now use SlimSelect instead of Select2 (no jQuery UI plugin dependency).
+* Fix: the loading overlay never actually appeared during a scan or merge, so clicking those buttons could look like nothing happened.
+* Fix: the confirmation dialog for Execute Merge, Revert, and Delete Backup rendered off-screen instead of over the page.
+* Fix: a second click before confirming a destructive action could open a second dialog and fire a second request.
+* Fix: Select All / Delete Selected on the backups list went permanently inert after the first merge, revert, or delete.
+* Fix: an expired security token on the player search was indistinguishable from "no players match"; the real error now shows.
+* Fix: nine places that read a custom field and wrote it straight back could silently strip backslashes from values containing them (a Windows path, escaped JSON); revert no longer double-applies the same strip.
+* Fix: merging two players already listed together on the same event no longer leaves the surviving player listed twice on it.
+* Fix: a database error partway through reference rewriting no longer proceeds to delete the duplicate player, which would have orphaned references.
+* Fix: backup capture now covers every field a merge can rewrite, not just one of them, so revert can actually restore what changed.
+* Fix: a failed database schema upgrade no longer marks itself complete, which had made every future revert fail with no diagnostic.
+* Fix: failed-merge backups are no longer purged by the 30-day cleanup that's supposed to spare them.
+* Fix: single-word surname particles (Van Horn / VanHorn, DeSilva, LeBlanc) are now recognized as duplicates the same way multi-word particles already were.
+* Fix: `wp sp-merge backups list --limit`/`--status` and `scan --scenario` now reject a typo'd value instead of silently returning the wrong results.
 * Fix: `wp sp-merge scan --min-certainty` now filters on the same adjusted certainty the admin screen shows, not the raw name-matcher score.
 * Fix: merge previews count only real sp_event posts, so two players sharing only a squad list are no longer reported as a same-event collision.
 * Fix: a revert now takes the same lock a merge takes, refusing while a merge or another revert is in progress.
 * Fix: a merge re-validates its selection after acquiring that lock.
 * Fix: `wp sp-merge batch` refuses malformed input rows, refuses a non-local or unreadable input path, and never writes a blank log line for an unencodable result. It also records the retained backup ID of a row whose merge failed.
+* Fix: the auto-updater's checks never actually ran during the WP-Cron requests that WordPress's own update check and auto-update process use, so the plugin could never auto-update.
 
 = 1.1.0 =
 * Fuzzy duplicate detection with 14 matching scenarios (nicknames, prefix normalization, typos, accents, bilingual equivalents, compound names, and more)
