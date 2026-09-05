@@ -213,6 +213,16 @@ class SP_Merge_Name_Matcher {
 	}
 
 	/**
+	 * Single-word surname particles. Kept as one list so parse_name() can fold
+	 * a trailing particle onto the surname using the same set this class's
+	 * own normalization recognizes — see parse_name()'s docblock for why that
+	 * fold exists.
+	 *
+	 * @var string[]
+	 */
+	private const SINGLE_WORD_PARTICLES = array( 'van', 'von', 'de', 'du', 'le', 'la', 'del', 'della', 'di', 'el', 'al' );
+
+	/**
 	 * Normalize surname prefixes/particles (#4).
 	 * O'Connor→oconnor, MacBeth→mcbeth, van der Berg→vanderberg, de la Cruz→delacruz.
 	 *
@@ -234,8 +244,11 @@ class SP_Merge_Name_Matcher {
 		if ( str_starts_with( $s, 'mac' ) && strlen( $s ) > 4 ) {
 			$s = 'mc' . substr( $s, 3 );
 		}
-		// Remove particles.
-		$s = preg_replace( '/^(van|von|de|du|le|la|del|della|di|el|al)\s+/', '', $s );
+		// Remove a two-word particle glued onto the surname by concatenation
+		// (VanDerBerg → berg) — parse_name() only ever hands this function a
+		// single token, so a one-word particle followed by whitespace never
+		// reaches here; that half is folded onto the surname in parse_name()
+		// itself instead, before normalization runs.
 		$s = preg_replace( '/^(van|von|de|du|le|la|del|della|di|el|al)(der|den|het|la|les)\s*/', '', $s );
 		// Remove remaining spaces (van der Berg → vanderberg already handled above, catch stragglers).
 		$s = str_replace( ' ', '', $s );
@@ -282,9 +295,31 @@ class SP_Merge_Name_Matcher {
 			);
 		}
 
-		$first  = $parts[0];
-		$last   = end( $parts );
-		$middle = count( $parts ) > 2 ? implode( ' ', array_slice( $parts, 1, -1 ) ) : '';
+		$first        = $parts[0];
+		$last         = end( $parts );
+		$middle_parts = count( $parts ) > 2 ? array_slice( $parts, 1, -1 ) : array();
+
+		/*
+		 * A single-word particle (van, de, le, ...) directly before the
+		 * surname would otherwise just be discarded into $middle and never
+		 * reach normalize_surname() at all. That leaves "Kim Van Horn"
+		 * (last = "horn") and "Kim VanHorn" (last = "vanhorn") normalizing to
+		 * different strings and never matching — even though a TWO-word
+		 * particle like "van der" already round-trips correctly ("Johan van
+		 * der Berg" discards both words into $middle, leaving last = "berg";
+		 * "Johan VanDerBerg" keeps last = "vanderberg", which
+		 * normalize_surname() strips back down to "berg"). Folding the
+		 * trailing single-word particle onto $last here makes both spellings
+		 * converge on the same string before normalization runs, rather than
+		 * teaching normalize_surname() a second, asymmetric code path for a
+		 * word count it can no longer see once parse_name() has already
+		 * split on spaces.
+		 */
+		if ( ! empty( $middle_parts ) && in_array( end( $middle_parts ), self::SINGLE_WORD_PARTICLES, true ) ) {
+			$last = array_pop( $middle_parts ) . $last;
+		}
+
+		$middle = implode( ' ', $middle_parts );
 
 		return array(
 			'first'    => $first,
