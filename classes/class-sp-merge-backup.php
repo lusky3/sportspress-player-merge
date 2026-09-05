@@ -363,8 +363,28 @@ class SP_Merge_Backup {
 		);
 
 		foreach ( $additions as $column => $sql ) {
-			if ( ! in_array( $column, $columns, true ) ) {
-				$wpdb->query( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			if ( in_array( $column, $columns, true ) ) {
+				continue;
+			}
+
+			if ( false === $wpdb->query( $sql ) ) { // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				/*
+				 * Recording DB_VERSION here anyway would be worse than retrying
+				 * on every request: post_hashes would silently never exist,
+				 * mark_active() would silently never persist a hash, and every
+				 * future revert would refuse with values_changed until an
+				 * operator finds this in the error log and forces it — the
+				 * safety net degrading into its own override with no signal.
+				 * Leaving the option unset means the next request just retries.
+				 */
+				error_log( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					sprintf(
+						'SP Merge: failed to add column `%1$s` to %2$s. Revert will refuse with values_changed until this is fixed.',
+						$column,
+						$table_name
+					)
+				);
+				return;
 			}
 		}
 
@@ -463,14 +483,38 @@ class SP_Merge_Backup {
 		$placeholders = implode( ',', array_fill( 0, count( $duplicate_ids ), '%s' ) );
 		$str_ids      = array_map( 'strval', $duplicate_ids );
 
-		// Find events referencing any duplicate player.
+		/*
+		 * Find every post the merge's reference rewrite can touch — not just
+		 * events with an `sp_player` row. SP_Merge_Processor::update_event_
+		 * references() rewrites sp_player, sp_offense AND sp_defense with no
+		 * post_id restriction at all, so a post carrying only sp_offense or
+		 * sp_defense for a duplicate was previously rewritten by the merge and
+		 * never captured here — a revert could not restore it. The LIKE
+		 * fallback catches the same case update_player_list_references()
+		 * already handles for sp_list: a duplicate referenced only inside
+		 * serialized sp_players/sp_timeline/sp_order/sp_stars, with no simple
+		 * meta row at all.
+		 */
 		$event_ids = $wpdb->get_col(
 			$wpdb->prepare(
 				"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
-				WHERE meta_key = 'sp_player' AND meta_value IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				WHERE meta_key IN ('sp_player', 'sp_offense', 'sp_defense') AND meta_value IN ({$placeholders})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				$str_ids
 			)
 		);
+
+		foreach ( $str_ids as $str_id ) {
+			$serialized_ids = $wpdb->get_col(
+				$wpdb->prepare(
+					"SELECT DISTINCT post_id FROM {$wpdb->postmeta}
+					WHERE meta_key IN ('sp_players', 'sp_timeline', 'sp_order', 'sp_stars') AND meta_value LIKE %s",
+					'%' . $wpdb->esc_like( $str_id ) . '%'
+				)
+			);
+			$event_ids = array_merge( $event_ids, $serialized_ids );
+		}
+
+		$event_ids = array_values( array_unique( array_map( 'intval', $event_ids ) ) );
 
 		if ( empty( $event_ids ) ) {
 			return array();
@@ -1219,14 +1263,23 @@ class SP_Merge_Backup {
 				$event_id = (int) $event_id;
 				foreach ( $meta_entries as $meta_key => $original_value ) {
 					if ( 0 === strpos( $meta_key, '_simple_' ) ) {
-						// Restore simple meta rows by meta_id.
+						// Restore simple meta rows by meta_id, scoped to the
+						// post and key they were captured from — defense in
+						// depth against meta_id reuse or drift (a mysqldump
+						// restore in between, for one) rather than a bare
+						// global-table match on an autoincrement column.
+						$real_key = substr( $meta_key, strlen( '_simple_' ) );
 						foreach ( $original_value as $row ) {
 							$wpdb->update(
 								$wpdb->postmeta,
 								array( 'meta_value' => $row['meta_value'] ),
-								array( 'meta_id' => (int) $row['meta_id'] ),
+								array(
+									'meta_id'  => (int) $row['meta_id'],
+									'post_id'  => $event_id,
+									'meta_key' => $real_key,
+								),
 								array( '%s' ),
-								array( '%d' )
+								array( '%d', '%d', '%s' )
 							);
 						}
 					} else {
@@ -1248,9 +1301,13 @@ class SP_Merge_Backup {
 							$wpdb->update(
 								$wpdb->postmeta,
 								array( 'meta_value' => $row['meta_value'] ),
-								array( 'meta_id' => (int) $row['meta_id'] ),
+								array(
+									'meta_id'  => (int) $row['meta_id'],
+									'post_id'  => $list_id,
+									'meta_key' => 'sp_player',
+								),
 								array( '%s' ),
-								array( '%d' )
+								array( '%d', '%d', '%s' )
 							);
 						}
 					} else {
@@ -1447,14 +1504,30 @@ class SP_Merge_Backup {
 
 	/**
 	 * Remove backups older than retention period.
+	 *
+	 * Never removes a `failed` backup: mark_failed() exists precisely to keep
+	 * that row loadable, and a merge failure is exactly when it is needed —
+	 * deleting it on the same clock as a routine `active` row would destroy
+	 * the one recovery point an operator was told to keep.
+	 *
+	 * The cutoff is computed in PHP from current_time( 'mysql' ), the same
+	 * clock created_at was written with (site-local, per the `timezone_string`/
+	 * `gmt_offset` option) — comparing against MySQL's own NOW() instead would
+	 * skew by however far the database server's timezone differs from the
+	 * site's, deleting backups hours early or late depending on which side of
+	 * UTC the site sits on.
 	 */
 	private function cleanup_old_backups(): void {
 		global $wpdb;
 
+		$cutoff = gmdate( 'Y-m-d H:i:s', strtotime( current_time( 'mysql' ) ) - ( SP_MERGE_BACKUP_RETENTION_DAYS * DAY_IN_SECONDS ) );
+
 		$wpdb->query(
 			$wpdb->prepare(
-				"DELETE FROM {$wpdb->prefix}sp_merge_backups WHERE created_at < DATE_SUB(NOW(), INTERVAL %d DAY)",
-				SP_MERGE_BACKUP_RETENTION_DAYS
+				"DELETE FROM {$wpdb->prefix}sp_merge_backups
+				WHERE created_at < %s
+				AND COALESCE(status, 'active') != 'failed'",
+				$cutoff
 			)
 		);
 	}

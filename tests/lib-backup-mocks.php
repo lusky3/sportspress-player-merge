@@ -17,6 +17,7 @@
 define( 'ABSPATH', __DIR__ . '/' );
 define( 'SP_MERGE_VERSION', '1.2.0' );
 define( 'SP_MERGE_BACKUP_RETENTION_DAYS', 30 );
+define( 'DAY_IN_SECONDS', 86400 );
 
 $GLOBALS['sp_test_failures']  = 0;
 $GLOBALS['sp_test_checks']    = 0;
@@ -468,11 +469,27 @@ class SP_Test_WPDB {
 	public function update( $table, $data, $where, $formats = null, $where_formats = null ) {
 		if ( $this->postmeta === $table ) {
 			$meta_id = (int) ( $where['meta_id'] ?? 0 );
-			if ( isset( $GLOBALS['sp_meta_rows'][ $meta_id ] ) ) {
-				$GLOBALS['sp_meta_rows'][ $meta_id ]['meta_value'] = (string) $data['meta_value'];
-				return 1;
+			$row     = $GLOBALS['sp_meta_rows'][ $meta_id ] ?? null;
+
+			if ( null === $row ) {
+				return 0;
 			}
-			return 0;
+
+			// Every WHERE column beyond meta_id (post_id, meta_key) must also
+			// match — this is what a real query's AND clauses require, and
+			// what proves the restore is scoped to the row it captured rather
+			// than a bare meta_id match on an autoincrement column.
+			foreach ( $where as $column => $value ) {
+				if ( 'meta_id' === $column ) {
+					continue;
+				}
+				if ( (string) ( $row[ $column ] ?? '' ) !== (string) $value ) {
+					return 0;
+				}
+			}
+
+			$GLOBALS['sp_meta_rows'][ $meta_id ]['meta_value'] = (string) $data['meta_value'];
+			return 1;
 		}
 
 		$updated = 0;
@@ -495,6 +512,14 @@ class SP_Test_WPDB {
 		return $updated;
 	}
 
+	/**
+	 * Arm the next ALTER TABLE to report a DB failure instead of succeeding —
+	 * a restricted DB user, a row-size limit, or a locked table.
+	 *
+	 * @var bool
+	 */
+	public $fail_next_alter = false;
+
 	public function query( $query ) {
 		list( $sql, $args ) = $this->unpack( $query );
 		$this->statements[] = $sql;
@@ -504,6 +529,10 @@ class SP_Test_WPDB {
 		}
 
 		if ( 0 === strpos( $sql, 'ALTER TABLE' ) ) {
+			if ( $this->fail_next_alter ) {
+				$this->fail_next_alter = false;
+				return false;
+			}
 			return true;
 		}
 
@@ -566,6 +595,24 @@ class SP_Test_WPDB {
 			return $before - count( $this->backups );
 		}
 
+		// DELETE FROM wp_sp_merge_backups WHERE created_at < %s AND COALESCE(status, 'active') != 'failed' (retention cleanup).
+		if ( 0 === strpos( $sql, 'DELETE FROM wp_sp_merge_backups' ) && false !== strpos( $sql, 'created_at <' ) ) {
+			$cutoff = (string) $args[0];
+			$before = count( $this->backups );
+
+			$this->backups = array_values(
+				array_filter(
+					$this->backups,
+					static function ( $row ) use ( $cutoff ) {
+						$status = $row['status'] ?? 'active';
+						return ! ( (string) $row['created_at'] < $cutoff && 'failed' !== $status );
+					}
+				)
+			);
+
+			return $before - count( $this->backups );
+		}
+
 		if ( false !== strpos( $sql, 'DELETE FROM wp_sp_merge_backups' ) ) {
 			return 0;
 		}
@@ -606,6 +653,31 @@ class SP_Test_WPDB {
 
 		if ( 0 === strpos( $sql, 'SHOW COLUMNS FROM' ) ) {
 			return $this->columns;
+		}
+
+		// backup_affected_event_meta()'s discovery queries: simple-key exact
+		// match (sp_player/sp_offense/sp_defense IN (...)) and the serialized
+		// LIKE fallback (sp_players/sp_timeline/sp_order/sp_stars).
+		if ( 0 === strpos( $sql, 'SELECT DISTINCT post_id FROM' ) ) {
+			$out = array();
+
+			if ( false !== strpos( $sql, 'meta_value IN' ) ) {
+				$values = array_map( 'strval', $args );
+				foreach ( $GLOBALS['sp_meta_rows'] as $row ) {
+					if ( in_array( (string) $row['meta_value'], $values, true ) ) {
+						$out[] = (int) $row['post_id'];
+					}
+				}
+			} elseif ( false !== strpos( $sql, 'meta_value LIKE' ) ) {
+				$like = str_replace( array( '\\_', '%' ), array( '_', '' ), (string) $args[0] );
+				foreach ( $GLOBALS['sp_meta_rows'] as $row ) {
+					if ( false !== strpos( (string) $row['meta_value'], $like ) ) {
+						$out[] = (int) $row['post_id'];
+					}
+				}
+			}
+
+			return array_values( array_unique( $out ) );
 		}
 
 		return array();
@@ -725,6 +797,29 @@ class SP_Test_WPDB {
 			return $out;
 		}
 
+		// backup_affected_event_meta()'s per-event simple-meta capture:
+		// SELECT meta_id, meta_value FROM wp_postmeta
+		// WHERE post_id = %d AND meta_key = %s AND meta_value IN (...).
+		if ( false !== strpos( $sql, 'SELECT meta_id, meta_value FROM wp_postmeta' )
+			&& false !== strpos( $sql, 'post_id = %d AND meta_key = %s' ) ) {
+			$post_id  = (int) array_shift( $args );
+			$meta_key = (string) array_shift( $args );
+			$values   = array_map( 'strval', $args );
+
+			$out = array();
+			foreach ( $GLOBALS['sp_meta_rows'] as $meta_id => $row ) {
+				if ( (int) $row['post_id'] === $post_id
+					&& $row['meta_key'] === $meta_key
+					&& in_array( (string) $row['meta_value'], $values, true ) ) {
+					$out[] = (object) array(
+						'meta_id'    => $meta_id,
+						'meta_value' => $row['meta_value'],
+					);
+				}
+			}
+			return $out;
+		}
+
 		return array();
 	}
 }
@@ -761,16 +856,17 @@ function sp_test_reset(): void {
  * @param string     $status        Row status.
  * @param array|null $touched       Touched post IDs, or null to leave unset.
  * @param array|null $post_hashes   Post-merge hashes, or null to leave unset.
- * @param int|null   $user_id       Owner.
+ * @param int|null    $user_id      Owner.
+ * @param string|null $created_at   Row timestamp, or null for the fixed default.
  */
-function sp_test_seed_backup( string $backup_id, array $data, string $status = 'active', ?array $touched = null, ?array $post_hashes = null, ?int $user_id = null ): void {
+function sp_test_seed_backup( string $backup_id, array $data, string $status = 'active', ?array $touched = null, ?array $post_hashes = null, ?int $user_id = null, ?string $created_at = null ): void {
 	$GLOBALS['wpdb']->insert(
 		'wp_sp_merge_backups',
 		array(
 			'backup_id'     => $backup_id,
 			'user_id'       => $user_id ?? $GLOBALS['sp_current_user'],
 			'backup_data'   => json_encode( $data ),
-			'created_at'    => '2026-08-01 10:00:00',
+			'created_at'    => $created_at ?? '2026-08-01 10:00:00',
 			'status'        => $status,
 			'touched_posts' => null === $touched ? null : json_encode( $touched ),
 			'post_hashes'   => null === $post_hashes ? null : json_encode( $post_hashes ),

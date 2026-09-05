@@ -207,9 +207,22 @@ class SP_Merge_Processor {
 
 			$wpdb->query( 'COMMIT' );
 
-			// Only a committed merge promotes the backup out of `pending`.
-			if ( method_exists( $backup, 'mark_active' ) ) {
-				$backup->mark_active( $backup_id );
+			/*
+			 * Only a committed merge promotes the backup out of `pending`. A
+			 * false return here (a race, or the schema upgrade that adds
+			 * post_hashes having silently failed) means post_hashes is never
+			 * recorded — every future revert of THIS backup will then refuse
+			 * with values_changed, since there is nothing to compare against.
+			 * The merge itself already committed, so this must not fail loudly;
+			 * it must not fail silently either.
+			 */
+			if ( method_exists( $backup, 'mark_active' ) && ! $backup->mark_active( $backup_id ) ) {
+				error_log( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					sprintf(
+						'SP Merge: mark_active() failed for backup %s. Revert will require --force until this is investigated.',
+						$backup_id
+					)
+				);
 			}
 
 			$this->clear_sportspress_caches( $primary_id, $duplicate_ids );
