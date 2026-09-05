@@ -20,7 +20,7 @@
 
 use SebastianBergmann\CodeCoverage\Report\PHP as PhpReport;
 
-require __DIR__ . '/lib.php';
+require_once __DIR__ . '/lib.php';
 
 if ( $argc < 3 ) {
 	fwrite( STDERR, "Usage: php bin/coverage/run-one.php <test-file> <output-file>\n" );
@@ -54,4 +54,4 @@ register_shutdown_function(
 
 unset( $spm_cov_coverage, $spm_cov_output, $spm_cov_id );
 
-require $spm_cov_test;
+require_once $spm_cov_test;

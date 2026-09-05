@@ -21,7 +21,7 @@ use SebastianBergmann\CodeCoverage\CodeCoverage;
 use SebastianBergmann\CodeCoverage\Node\File as FileNode;
 use SebastianBergmann\CodeCoverage\Report\Clover;
 
-require __DIR__ . '/lib.php';
+require_once __DIR__ . '/lib.php';
 
 if ( $argc < 3 ) {
 	fwrite( STDERR, "Usage: php bin/coverage/merge.php <raw-data-dir> <output-dir>\n" );
@@ -49,7 +49,7 @@ sort( $snapshots );
 $combined = SPM_Coverage_Support::coverage();
 
 foreach ( $snapshots as $snapshot ) {
-	$loaded = require $snapshot;
+	$loaded = require_once $snapshot;
 
 	if ( ! $loaded instanceof CodeCoverage ) {
 		fwrite( STDERR, "Not a coverage snapshot: {$snapshot}\n" );
