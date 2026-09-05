@@ -143,7 +143,7 @@ class SP_Merge_Admin {
 			// Not include_once: this page can legitimately render more than
 			// once in a request (e.g. via do_action() called twice), and
 			// _once would silently emit nothing the second time.
-			include $template_path;
+			include $template_path; // NOSONAR php:S2003 -- include_once is wrong here, see comment above.
 		} else {
 			wp_die( esc_html__( 'Error: Admin page template not found.', 'sportspress-player-merge' ) );
 		}
