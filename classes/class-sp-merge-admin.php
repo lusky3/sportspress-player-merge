@@ -324,7 +324,6 @@ class SP_Merge_Admin {
 	 */
 	private function get_localized_strings(): array {
 		return array(
-			'confirmMerge'  => __( 'Are you sure you want to merge these players?', 'sportspress-player-merge' ),
 			'confirmRevert' => __( 'Are you sure you want to revert the last merge?', 'sportspress-player-merge' ),
 			'selectPlayers' => __( 'Please select a primary player and at least one duplicate.', 'sportspress-player-merge' ),
 			'mergeSuccess'  => __( 'Players merged successfully!', 'sportspress-player-merge' ),
