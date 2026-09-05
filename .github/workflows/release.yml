@@ -140,7 +140,9 @@ jobs:
             --exclude='docs' \
             --exclude='node_modules' \
             --exclude='tests' \
-            --exclude='vendor/bin' \
+            --exclude='coverage' \
+            --exclude='.coverage-raw' \
+            --exclude='vendor' \
             . "$PLUGIN_SLUG/"
           zip -r "${PLUGIN_SLUG}.zip" "$PLUGIN_SLUG"
           echo "ZIP_FILE=${PLUGIN_SLUG}.zip" >> "$GITHUB_ENV"
