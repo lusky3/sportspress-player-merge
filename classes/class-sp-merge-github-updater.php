@@ -190,11 +190,17 @@ class SP_Merge_GitHub_Updater {
 	/**
 	 * Check GitHub for a newer release and inject into the update transient.
 	 *
-	 * @param object $transient The update_plugins transient.
-	 * @return object Modified transient.
+	 * No type hints: core calls this with whatever set_site_transient()
+	 * was last given, and a "clear update cache" action routinely passes
+	 * null or an empty array rather than the real transient object — a
+	 * non-nullable `object` parameter (or return) would TypeError-fatal
+	 * every admin request the moment that happens.
+	 *
+	 * @param mixed $transient The update_plugins transient, or null/array/etc.
+	 * @return mixed Modified transient, or the input unchanged if it wasn't usable.
 	 */
-	public function check_update( object $transient ): object {
-		if ( self::is_disabled() || empty( $transient->checked ) ) {
+	public function check_update( $transient ) {
+		if ( self::is_disabled() || ! is_object( $transient ) || empty( $transient->checked ) ) {
 			return $transient;
 		}
 

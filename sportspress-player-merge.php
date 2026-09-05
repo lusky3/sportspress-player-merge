@@ -92,7 +92,17 @@ class SportsPress_Player_Merge_Init {
 	 * Initialize the plugin — admin only.
 	 */
 	public function init(): void {
-		if ( ! is_admin() && ! wp_doing_ajax() && ! ( defined( 'WP_CLI' ) && WP_CLI ) ) {
+		/*
+		 * wp_doing_cron() matters here specifically for the updater block just
+		 * below: wp_update_plugins() (core's own update check, and
+		 * WP_Automatic_Updater::run(), which performs the actual auto-update)
+		 * both run from WP-Cron, not from an admin request. Without it, this
+		 * plugin's update filters were never registered when the very things
+		 * that check for and install updates ran, so the update badge only
+		 * appeared depending on which request type happened to check first,
+		 * and the plugin could never auto-update at all.
+		 */
+		if ( ! is_admin() && ! wp_doing_ajax() && ! wp_doing_cron() && ! ( defined( 'WP_CLI' ) && WP_CLI ) ) {
 			return;
 		}
 

@@ -307,4 +307,33 @@ $result_disabled    = $disabled->check_update( $transient_disabled );
 spm_assert_equals( array(), $result_disabled->response, 'a disabled updater offers no update even for a valid newer release' );
 spm_assert_equals( 0, $GLOBALS['spm_http_calls'], 'a disabled updater never calls the API' );
 
+//
+// 7. check_update() must not fatal on a non-object transient. Core calls
+//    pre_set_site_transient_update_plugins with whatever set_site_transient()
+//    was last given, and a "clear update cache" action routinely passes null
+//    or an empty array rather than the real transient — a non-nullable
+//    `object` type hint on the parameter used to TypeError-fatal every admin
+//    request the moment that happened.
+//
+
+$fresh = new SP_Merge_GitHub_Updater( __DIR__ . '/sportspress-player-merge.php', '1.2.0' );
+
+$threw = null;
+try {
+	$null_result = $fresh->check_update( null );
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+spm_assert( null === $threw, 'check_update( null ) does not fatal' . ( $threw ? ' (' . get_class( $threw ) . ': ' . $threw->getMessage() . ')' : '' ) );
+spm_assert_equals( null, $null_result ?? null, 'check_update( null ) returns the input unchanged' );
+
+$threw = null;
+try {
+	$array_result = $fresh->check_update( array() );
+} catch ( Throwable $e ) {
+	$threw = $e;
+}
+spm_assert( null === $threw, 'check_update( array() ) does not fatal' . ( $threw ? ' (' . get_class( $threw ) . ': ' . $threw->getMessage() . ')' : '' ) );
+spm_assert_equals( array(), $array_result ?? null, 'check_update( array() ) returns the input unchanged' );
+
 spm_test_summary();

@@ -20,6 +20,12 @@ $wpdb->query( "DROP TABLE IF EXISTS `{$table_name}`" ); // phpcs:ignore WordPres
 // Remove user meta.
 delete_metadata( 'user', 0, 'sp_last_merge_backup', '', true );
 
+// Remove the backup table's schema-version marker (autoloaded, so it costs
+// every page load forever after uninstall otherwise) — and so a later
+// reinstall's maybe_upgrade_schema() doesn't short-circuit on a stale value
+// left over from before the table above was dropped.
+delete_option( 'sp_merge_backup_db_version' );
+
 // Remove transients.
 $wpdb->query(
 	$wpdb->prepare(
