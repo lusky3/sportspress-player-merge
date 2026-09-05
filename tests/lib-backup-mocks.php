@@ -138,6 +138,47 @@ function maybe_unserialize( $data ) {
 	return $data;
 }
 
+/**
+ * Recursively addslashes()/stripslashes() a value, mirroring
+ * wp-includes/formatting.php's addslashes_deep()/stripslashes_deep().
+ *
+ * add_post_meta()/update_post_meta() below call wp_unslash() before storing,
+ * exactly as WordPress's add_metadata()/update_metadata() do — so a caller
+ * that writes a get_post_meta() value straight back without wp_slash() first
+ * loses one level of backslashes here too, the same way it would in production.
+ *
+ * @param mixed  $value Value to transform.
+ * @param string $fn    'addslashes' or 'stripslashes'.
+ * @return mixed
+ */
+function sp_test_slashes_deep( $value, string $fn ) {
+	if ( is_array( $value ) ) {
+		return array_map(
+			static function ( $item ) use ( $fn ) {
+				return sp_test_slashes_deep( $item, $fn );
+			},
+			$value
+		);
+	}
+
+	if ( is_object( $value ) ) {
+		foreach ( get_object_vars( $value ) as $key => $data ) {
+			$value->$key = sp_test_slashes_deep( $data, $fn );
+		}
+		return $value;
+	}
+
+	return is_string( $value ) ? $fn( $value ) : $value;
+}
+
+function wp_slash( $value ) {
+	return sp_test_slashes_deep( $value, 'addslashes' );
+}
+
+function wp_unslash( $value ) {
+	return sp_test_slashes_deep( $value, 'stripslashes' );
+}
+
 function sp_test_add_meta( int $post_id, string $key, $value, ?int $meta_id = null ): int {
 	$meta_id                              = $meta_id ?? $GLOBALS['sp_meta_next_id']++;
 	$GLOBALS['sp_meta_rows'][ $meta_id ] = array(
@@ -209,7 +250,7 @@ function get_post_meta( $post_id, $key = '', $single = false ) {
 function add_post_meta( $post_id, $key, $value, $unique = false ) {
 	sp_test_maybe_throw( 'add_post_meta', (int) $post_id );
 
-	return sp_test_add_meta( (int) $post_id, (string) $key, $value );
+	return sp_test_add_meta( (int) $post_id, (string) $key, wp_unslash( $value ) );
 }
 
 function update_post_meta( $post_id, $key, $value ) {
@@ -220,7 +261,7 @@ function update_post_meta( $post_id, $key, $value ) {
 			unset( $GLOBALS['sp_meta_rows'][ $meta_id ] );
 		}
 	}
-	return sp_test_add_meta( (int) $post_id, (string) $key, $value );
+	return sp_test_add_meta( (int) $post_id, (string) $key, wp_unslash( $value ) );
 }
 
 function delete_post_meta( $post_id, $key ) {

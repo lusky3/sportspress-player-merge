@@ -1230,7 +1230,7 @@ class SP_Merge_Backup {
 							);
 						}
 					} else {
-						update_post_meta( $event_id, $meta_key, $original_value );
+						update_post_meta( $event_id, $meta_key, wp_slash( $original_value ) );
 					}
 				}
 				clean_post_cache( $event_id );
@@ -1254,7 +1254,7 @@ class SP_Merge_Backup {
 							);
 						}
 					} else {
-						update_post_meta( $list_id, $meta_key, $original_value );
+						update_post_meta( $list_id, $meta_key, wp_slash( $original_value ) );
 					}
 				}
 				clean_post_cache( $list_id );
@@ -1394,7 +1394,7 @@ class SP_Merge_Backup {
 						if ( is_object( $restored ) ) {
 							continue; // Skip unexpected objects for safety.
 						}
-						add_post_meta( $player_id, $key, $restored );
+						add_post_meta( $player_id, $key, wp_slash( $restored ) );
 					}
 				}
 			}
