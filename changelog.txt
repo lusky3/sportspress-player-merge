@@ -1,5 +1,10 @@
 # SportsPress Player Merge - Changelog
 
+## Version 1.3.1
+
+### Bug Fixes
+- The release ZIP was missing `assets/vendor/` (the bundled SlimSelect library) because the build's rsync exclusion pattern (`--exclude='vendor'`) matched any directory named `vendor` at any depth in the tree, not just the top-level composer one. Anchored it to the repository root (`--exclude='/vendor'`) so `assets/vendor/` ships again. Anyone who installed 1.3.0 from the GitHub release asset — rather than a git checkout — had non-functional player-picker dropdowns as a result.
+
 ## Version 1.3.0
 
 ### New Features

@@ -4,7 +4,7 @@ Tags: sportspress, players, merge, duplicate, sports
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 1.3.0
+Stable tag: 1.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -82,6 +82,9 @@ Event box scores (sp_players), timelines (sp_timeline), star selections (sp_star
 Yes. `wp sp-merge scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, and `batch` cover the same functionality headlessly, for scripting and bulk operations the admin screen isn't built for. WP-CLI has no logged-in web session, so every subcommand requires its own `--user=<id|login>` flag to set the acting identity, checked against the same capabilities the admin screen uses. See the plugin's README for the full command and capability reference.
 
 == Changelog ==
+
+= 1.3.1 =
+* Fix: the release ZIP was missing `assets/vendor/` (the bundled SlimSelect library) because the build's file-exclusion pattern matched any directory named `vendor` at any depth, not just the top-level one. Anyone who installed 1.3.0 from the GitHub release asset (rather than a git checkout) had non-functional player-picker dropdowns.
 
 = 1.3.0 =
 * New: `wp sp-merge` WP-CLI command family (`scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, `batch`) for headless and scripted merge/revert/backup operations. `batch` requires `--yes` — it confirms per row and is not interactive.
