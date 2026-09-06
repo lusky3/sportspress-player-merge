@@ -911,7 +911,7 @@
 						+ ' data-player="' + this.escapeHtml( memberJson ) + '"' + checked + '>'
 						+ ' <label for="' + cbId + '">' + this.escapeHtml( p.name ) + ' #' + this.escapeHtml( p.id ) + metaStr
 						+ ' <small>' + this.escapeHtml( p.events ) + ' events</small> ' + memberBadge + '</label>'
-						+ ' <a href="' + this.escapeHtml( p.edit_link ) + '">edit</a>'
+						+ ' <a href="' + this.escapeHtml( p.edit_link ) + '" target="_blank" rel="noopener noreferrer">edit</a>'
 						+ '</li>';
 				}
 				playerList += '</ul>';
