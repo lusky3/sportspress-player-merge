@@ -83,11 +83,9 @@ Yes. `wp sp-merge scan`, `preview`, `merge`, `revert`, `backups list`, `backups 
 
 == Changelog ==
 
-= Unreleased =
-* Change: the "edit" link beside each player in the duplicate scan results now opens in a new tab, so reviewing a player's edit screen no longer loses the scan results in progress.
-
 = 1.3.1 =
 * Fix: the release ZIP was missing `assets/vendor/` (the bundled SlimSelect library) because the build's file-exclusion pattern matched any directory named `vendor` at any depth, not just the top-level one. Anyone who installed 1.3.0 from the GitHub release asset (rather than a git checkout) had non-functional player-picker dropdowns.
+* Change: the "edit" link beside each player in the duplicate scan results now opens in a new tab, so reviewing a player's edit screen no longer loses the scan results in progress.
 
 = 1.3.0 =
 * New: `wp sp-merge` WP-CLI command family (`scan`, `preview`, `merge`, `revert`, `backups list`, `backups delete`, `batch`) for headless and scripted merge/revert/backup operations. `batch` requires `--yes` — it confirms per row and is not interactive.
