@@ -1,5 +1,10 @@
 # SportsPress Player Merge - Changelog
 
+## Unreleased
+
+### New Features
+- Added a "Merge" button on each duplicate-scan group that merges that group immediately, and a "Merge (x)" button above and below the results table (x = how many players are currently ticked across every group) that merges every ticked group in one pass. Every qualifying group is previewed first; one confirmation dialog lists everything that will happen (including any survivor-choice warnings) before anything executes. Groups then execute one at a time, each showing its own result inline; one group failing doesn't stop the rest.
+
 ## Version 1.3.1
 
 ### Bug Fixes
