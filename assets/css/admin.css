@@ -755,3 +755,26 @@ button[disabled][title]:hover::before {
 .sp-duplicate-group li input[type="checkbox"] {
     margin: 0 4px 0 0;
 }
+
+/* Batch merge (Possible Duplicates card) */
+.sp-batch-actions {
+    margin: 12px 0;
+}
+
+.sp-group-result {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sp-group-result-success {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.sp-group-result-error {
+    background: #f8d7da;
+    color: #842029;
+}
