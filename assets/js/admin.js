@@ -1059,6 +1059,7 @@
 								if ( outcome.ok ) {
 									results.merged++;
 									self.setGroupResult( r.$tr, '<button type="button" class="sp-group-result sp-group-result-success sp-scroll-to-backup" data-backup-id="' + self.escapeHtml( outcome.backupId ) + '">Merged &mdash; Backup #' + self.escapeHtml( outcome.backupId ) + '</button>' );
+									self.refreshBackupSection();
 								} else {
 									results.failed++;
 									self.setGroupResult( r.$tr, '<span class="sp-group-result sp-group-result-error">Failed: ' + self.escapeHtml( outcome.message ) + '</span>' );
@@ -1083,7 +1084,6 @@
 						}
 
 						self.showMessage( ( results.failed || previewFailed.length ) ? 'error' : 'success', summary + '.' );
-						self.refreshBackupSection();
 					} );
 				} );
 			} );
@@ -1240,8 +1240,14 @@
 				// row) starts a drag instead.
 				card.setAttribute( 'draggable', 'false' );
 				if ( header ) {
-					header.addEventListener( 'mousedown', function() {
+					header.addEventListener( 'mousedown', function( e ) {
+						if ( 0 !== e.button || $( e.target ).closest( 'button, a, input, select, textarea' ).length ) {
+							return;
+						}
 						card.setAttribute( 'draggable', 'true' );
+					} );
+					header.addEventListener( 'mouseup', function() {
+						card.setAttribute( 'draggable', 'false' );
 					} );
 				}
 

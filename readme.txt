@@ -85,6 +85,8 @@ Yes. `wp sp-merge scan`, `preview`, `merge`, `revert`, `backups list`, `backups 
 
 = Unreleased =
 * New: a "Merge" button on each duplicate-scan group now merges that group immediately, and a "Merge (x)" button above and below the results table merges every ticked group in one pass (x = how many players are currently ticked). One confirmation lists everything that will happen before anything runs; each group gets its own result shown inline, and one group failing doesn't stop the rest.
+* Fix: dragging an admin card by anywhere in it used to make it impossible to select or copy text inside the card (a player name, a backup ID); dragging now only starts from the card's own header/title bar.
+* Change: the "Merged — Backup #<id>" badge shown after a merge is now clickable — it scrolls to and briefly highlights that exact backup in the Backups list below, useful for finding one specific result among several from the same batch.
 
 = 1.3.1 =
 * Fix: the release ZIP was missing `assets/vendor/` (the bundled SlimSelect library) because the build's file-exclusion pattern matched any directory named `vendor` at any depth, not just the top-level one. Anyone who installed 1.3.0 from the GitHub release asset (rather than a git checkout) had non-functional player-picker dropdowns.
