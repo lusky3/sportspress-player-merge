@@ -234,6 +234,7 @@
 			$( document ).on( 'click', '.sp-row-merge', this.handleRowMerge.bind( this ) );
 			$( document ).on( 'click', '.sp-batch-merge', this.handleBatchMerge.bind( this ) );
 			$( document ).on( 'change', '.sp-dup-member', this.updateBatchMergeCount.bind( this ) );
+			$( document ).on( 'click', '.sp-scroll-to-backup', this.handleScrollToBackup.bind( this ) );
 			$( document ).on( 'click', '.sp-expand-toggle', this.handleExpandToggle.bind( this ) );
 			$( document ).on( 'click', '.sp-force-revert', this.handleForceRevert.bind( this ) );
 		},
@@ -949,6 +950,33 @@
 		},
 
 		/**
+		 * Jump to the backup a "Merged — Backup #<id>" badge refers to, and
+		 * briefly pulse it so the operator can find the exact row among
+		 * potentially many from the same batch.
+		 *
+		 * @param {jQuery.Event} e Click event from a .sp-scroll-to-backup badge.
+		 */
+		handleScrollToBackup: function( e ) {
+			var backupId = $( e.currentTarget ).data( 'backup-id' );
+
+			// The delete button is present for every backup regardless of
+			// status, unlike revert (active/pending only) — the more
+			// reliable anchor back to that backup's row.
+			var $row = $( '.sp-delete-backup[data-backup-id="' + backupId + '"]' ).closest( '.sp-backup-item' );
+
+			if ( ! $row.length ) {
+				return;
+			}
+
+			$( 'html, body' ).animate( { scrollTop: $row.offset().top - 100 }, 500, function() {
+				$row.addClass( 'sp-backup-pulse' );
+				setTimeout( function() {
+					$row.removeClass( 'sp-backup-pulse' );
+				}, 1500 );
+			} );
+		},
+
+		/**
 		 * Shared pipeline for both the single-row "Merge" button and the
 		 * top/bottom "Merge (x)" batch button — the only difference between
 		 * them is how many rows are passed in. Rows with fewer than two
@@ -1030,7 +1058,7 @@
 							return self.executeGroup( r ).then( function( outcome ) {
 								if ( outcome.ok ) {
 									results.merged++;
-									self.setGroupResult( r.$tr, '<span class="sp-group-result sp-group-result-success">Merged &mdash; Backup #' + self.escapeHtml( outcome.backupId ) + '</span>' );
+									self.setGroupResult( r.$tr, '<button type="button" class="sp-group-result sp-group-result-success sp-scroll-to-backup" data-backup-id="' + self.escapeHtml( outcome.backupId ) + '">Merged &mdash; Backup #' + self.escapeHtml( outcome.backupId ) + '</button>' );
 								} else {
 									results.failed++;
 									self.setGroupResult( r.$tr, '<span class="sp-group-result sp-group-result-error">Failed: ' + self.escapeHtml( outcome.message ) + '</span>' );
@@ -1204,7 +1232,18 @@
 			// Set up drag events on card headers.
 			var dragSrc = null;
 			container.querySelectorAll( '.sp-merge-card' ).forEach( function( card ) {
-				card.setAttribute( 'draggable', 'true' );
+				var header = card.querySelector( '.sp-merge-card-header' );
+
+				// Draggable only while the mouse is down on the header —
+				// otherwise the whole card is a drag source, and clicking or
+				// selecting text anywhere inside it (a player name, a backup
+				// row) starts a drag instead.
+				card.setAttribute( 'draggable', 'false' );
+				if ( header ) {
+					header.addEventListener( 'mousedown', function() {
+						card.setAttribute( 'draggable', 'true' );
+					} );
+				}
 
 				card.addEventListener( 'dragstart', function( e ) {
 					dragSrc = card;
@@ -1247,6 +1286,7 @@
 
 				card.addEventListener( 'dragend', function() {
 					card.classList.remove( 'sp-dragging' );
+					card.setAttribute( 'draggable', 'false' );
 					container.querySelectorAll( '.sp-drag-over' ).forEach( function( c ) {
 						c.classList.remove( 'sp-drag-over' );
 					} );
