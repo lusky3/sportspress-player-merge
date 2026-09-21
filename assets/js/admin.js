@@ -231,7 +231,10 @@
 			$( '#primary-player, #duplicate-players' ).on( 'change', this.invalidatePreview.bind( this ) );
 			$( '#primary-player, #duplicate-players' ).on( 'change', this.validateForm.bind( this ) );
 			$( '#scan-duplicates' ).on( 'click', this.handleScanDuplicates.bind( this ) );
-			$( document ).on( 'click', '.sp-select-duplicates', this.handleSelectDuplicates.bind( this ) );
+			$( document ).on( 'click', '.sp-row-merge', this.handleRowMerge.bind( this ) );
+			$( document ).on( 'click', '.sp-batch-merge', this.handleBatchMerge.bind( this ) );
+			$( document ).on( 'change', '.sp-dup-member', this.updateBatchMergeCount.bind( this ) );
+			$( document ).on( 'click', '.sp-scroll-to-backup', this.handleScrollToBackup.bind( this ) );
 			$( document ).on( 'click', '.sp-expand-toggle', this.handleExpandToggle.bind( this ) );
 			$( document ).on( 'click', '.sp-force-revert', this.handleForceRevert.bind( this ) );
 		},
@@ -764,27 +767,47 @@
 			$( '#delete-selected-backups' ).prop( 'disabled', $( '.backup-checkbox:checked' ).length === 0 );
 		},
 
+		/**
+		 * Refresh the Backups list. Returns a promise that never rejects
+		 * (same reasoning as previewGroup()/executeGroup()) so callers that
+		 * chain on it — runMergeGroups()'s sequential batch, in particular —
+		 * never abort their own chain over a failed refresh; it resolves
+		 * with an explicit true/false instead, so a caller can tell whether
+		 * the list actually landed the row it's expecting.
+		 *
+		 * @return {Promise<boolean>} Resolves true on a successful refresh,
+		 *                            false otherwise (network failure, or a
+		 *                            malformed/unsuccessful response).
+		 */
 		refreshBackupSection: function() {
 			var self = this;
 
-			$.post( spMergeAjax.ajaxUrl, {
-				action: 'sp_get_recent_backups',
-				nonce: spMergeAjax.nonce
-			} )
-				.done( function( response ) {
-					if ( response.success && response.data.html ) {
-						var $backupCard = $( '.sp-backup-section' );
+			return new Promise( function( resolve ) {
+				$.post( spMergeAjax.ajaxUrl, {
+					action: 'sp_get_recent_backups',
+					nonce: spMergeAjax.nonce
+				} )
+					.done( function( response ) {
+						if ( response.success && response.data.html ) {
+							var $backupCard = $( '.sp-backup-section' );
 
-						if ( $backupCard.length ) {
-							$backupCard.find( '.sp-merge-card-body' ).html( self.sanitizeHtml( response.data.html ) );
-						} else {
-							self.createBackupSection( response.data.html );
+							if ( $backupCard.length ) {
+								$backupCard.find( '.sp-merge-card-body' ).html( self.sanitizeHtml( response.data.html ) );
+							} else {
+								self.createBackupSection( response.data.html );
+							}
+
+							self.checkForExistingBackup();
+							$( '#revert-merge' ).removeClass( 'sp-hidden' ).show().prop( 'disabled', false );
+							resolve( true );
+							return;
 						}
-
-						self.checkForExistingBackup();
-						$( '#revert-merge' ).removeClass( 'sp-hidden' ).show().prop( 'disabled', false );
-					}
-				} );
+						resolve( false );
+					} )
+					.fail( function() {
+						resolve( false );
+					} );
+			} );
 		},
 
 		createBackupSection: function( backupHtml ) {
@@ -847,6 +870,300 @@
 			return c >= 90 ? 'sp-certainty-high' : ( c >= 70 ? 'sp-certainty-medium' : 'sp-certainty-low' );
 		},
 
+		/**
+		 * Ticked players within one duplicate-group row, in tick order. Rows
+		 * render events-descending, so the first ticked member is the one
+		 * with the most history — the best survivor — and becomes primary
+		 * for that group.
+		 *
+		 * @param {jQuery} $tr Table row for one duplicate group.
+		 * @return {Array} Player objects parsed from each checked box's data-player.
+		 */
+		collectGroupPlayers: function( $tr ) {
+			var players = [];
+			$tr.find( '.sp-dup-member:checked' ).each( function() {
+				try {
+					players.push( JSON.parse( $( this ).attr( 'data-player' ) ) );
+				} catch ( err ) {
+					// Malformed row data; skip this member.
+				}
+			} );
+			return players;
+		},
+
+		/**
+		 * Fetch a preview and its binding token for one group. Never
+		 * rejects — a failed preview resolves with ok:false so a batch of
+		 * many groups (each independently previewed via Promise.all) never
+		 * aborts the rest over one bad group.
+		 *
+		 * @param {Array} players Ticked players for this group, primary first.
+		 * @return {Promise<Object>} {ok:true, players, token, warnings} or
+		 *                           {ok:false, players, message}.
+		 */
+		previewGroup: function( players ) {
+			var primary = players[0];
+			var duplicateIds = players.slice( 1 ).map( function( p ) { return String( p.id ); } );
+
+			return new Promise( function( resolve ) {
+				$.post( spMergeAjax.ajaxUrl, {
+					action: 'sp_preview_merge',
+					nonce: spMergeAjax.nonce,
+					primary_player: String( primary.id ),
+					duplicate_players: duplicateIds
+				} ).done( function( response ) {
+					if ( response.success && response.data && response.data.token ) {
+						resolve( { ok: true, players: players, token: response.data.token, warnings: response.data.warnings || [] } );
+						return;
+					}
+					resolve( { ok: false, players: players, message: ( response.data && response.data.message ) || 'Preview failed.' } );
+				} ).fail( function() {
+					resolve( { ok: false, players: players, message: 'Network error occurred. Please try again.' } );
+				} );
+			} );
+		},
+
+		/**
+		 * Execute one already-previewed group. Never rejects, same
+		 * reasoning as previewGroup().
+		 *
+		 * @param {Object} prepared {players, token} from a successful previewGroup().
+		 * @return {Promise<Object>} {ok:true, backupId} or {ok:false, message}.
+		 */
+		executeGroup: function( prepared ) {
+			var primary = prepared.players[0];
+			var duplicateIds = prepared.players.slice( 1 ).map( function( p ) { return String( p.id ); } );
+
+			return new Promise( function( resolve ) {
+				$.post( spMergeAjax.ajaxUrl, {
+					action: 'sp_execute_merge',
+					nonce: spMergeAjax.nonce,
+					preview_token: prepared.token,
+					primary_player: String( primary.id ),
+					duplicate_players: duplicateIds
+				} ).done( function( response ) {
+					if ( response.success ) {
+						resolve( { ok: true, backupId: response.data.backup_id } );
+						return;
+					}
+					resolve( { ok: false, message: ( response.data && response.data.message ) || 'Merge execution failed.' } );
+				} ).fail( function() {
+					resolve( { ok: false, message: 'Network error occurred. Please try again.' } );
+				} );
+			} );
+		},
+
+		/**
+		 * Replace a group row's action cell with a static result badge, and
+		 * retire its checkboxes so the row can't be actioned a second time.
+		 * Keeps the "Merge (x)" live count honest: a merged or failed row's
+		 * ticked boxes no longer count toward anything actionable.
+		 *
+		 * @param {jQuery} $tr Table row for the group.
+		 * @param {string} badgeHtml HTML for the badge (build with escapeHtml()
+		 *                           for any interpolated text before calling this).
+		 */
+		setGroupResult: function( $tr, badgeHtml ) {
+			// nosemgrep: javascript.jquery.security.audit.prohibit-jquery-html.prohibit-jquery-html -- every caller builds badgeHtml with escapeHtml() around each interpolated value (see the two call sites in runMergeGroups()); the rule can't see that, only that .html() was called.
+			$tr.find( '.sp-group-action' ).html( badgeHtml );
+			$tr.find( '.sp-dup-member' ).prop( 'checked', false ).prop( 'disabled', true );
+			this.updateBatchMergeCount();
+		},
+
+		/**
+		 * Jump to the backup a "Merged — Backup #<id>" badge refers to, and
+		 * briefly pulse it so the operator can find the exact row among
+		 * potentially many from the same batch.
+		 *
+		 * @param {jQuery.Event} e Click event from a .sp-scroll-to-backup badge.
+		 */
+		handleScrollToBackup: function( e ) {
+			// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- $() wraps e.currentTarget, an element reference, not a selector string built from data.
+			var backupId = $( e.currentTarget ).data( 'backup-id' );
+
+			// The delete button is present for every backup regardless of
+			// status, unlike revert (active/pending only) — the more
+			// reliable anchor back to that backup's row. escapeSelector()
+			// neutralizes any CSS-selector metacharacter in the id before
+			// it's concatenated into the selector string, even though the
+			// id is always a server-generated value (never user-typed).
+			// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- $.escapeSelector() neutralizes CSS-selector metacharacters before concatenation; the rule flags the shape, not whether it's actually escaped.
+			var $row = $( '.sp-delete-backup[data-backup-id="' + $.escapeSelector( backupId ) + '"]' ).closest( '.sp-backup-item' );
+
+			if ( ! $row.length ) {
+				return;
+			}
+
+			$( 'html, body' ).animate( { scrollTop: $row.offset().top - 100 }, 500, function() {
+				$row.addClass( 'sp-backup-pulse' );
+				setTimeout( function() {
+					$row.removeClass( 'sp-backup-pulse' );
+				}, 1500 );
+			} );
+		},
+
+		/**
+		 * Shared pipeline for both the single-row "Merge" button and the
+		 * top/bottom "Merge (x)" batch button — the only difference between
+		 * them is how many rows are passed in. Rows with fewer than two
+		 * ticked players are skipped and counted, never reaching preview or
+		 * execute; a row with zero ticked players isn't "skipped", it's
+		 * simply not part of this action, so it isn't counted or mentioned.
+		 *
+		 * @param {jQuery} $rows Candidate group rows (one row, or every row).
+		 */
+		runMergeGroups: function( $rows ) {
+			var self = this;
+			var qualifying = [];
+			var skipped = 0;
+
+			$rows.each( function() {
+				var $tr = $( this );
+				var players = self.collectGroupPlayers( $tr );
+				if ( players.length >= 2 ) {
+					qualifying.push( { $tr: $tr, players: players } );
+				} else if ( players.length > 0 ) {
+					skipped++;
+				}
+			} );
+
+			if ( ! qualifying.length ) {
+				this.showMessage( 'error', spMergeAjax.strings.selectMembers );
+				return;
+			}
+
+			this.setLoadingState( true );
+
+			Promise.all( qualifying.map( function( q ) {
+				return self.previewGroup( q.players ).then( function( result ) {
+					result.$tr = q.$tr;
+					return result;
+				} );
+			} ) ).then( function( previewed ) {
+				var ready = previewed.filter( function( r ) { return r.ok; } );
+				var previewFailed = previewed.filter( function( r ) { return ! r.ok; } );
+
+				self.setLoadingState( false );
+
+				if ( ! ready.length ) {
+					self.showMessage( 'error', 'Nothing could be previewed: ' + previewFailed.map( function( r ) { return r.message; } ).join( ' ' ) );
+					return;
+				}
+
+				var details = [];
+				ready.forEach( function( r ) {
+					var primary = r.players[0];
+					r.players.slice( 1 ).forEach( function( dup ) {
+						details.push( 'DELETE: ' + dup.name + ' #' + dup.id + ' (into ' + primary.name + ' #' + primary.id + ')' );
+					} );
+					r.warnings.forEach( function( w ) {
+						details.push( 'WARNING (' + primary.name + '): ' + w );
+					} );
+				} );
+
+				var groupWord = ready.length === 1 ? 'group' : 'groups';
+				var message = 'Permanently delete ' + details.filter( function( d ) { return d.indexOf( 'DELETE:' ) === 0; } ).length
+					+ ' player record(s) across ' + ready.length + ' ' + groupWord
+					+ '? This cannot be undone except by reverting each backup individually.';
+
+				self.customConfirm( message, details ).then( function( confirmed ) {
+					if ( ! confirmed ) {
+						return;
+					}
+
+					self.setLoadingState( true );
+
+					var results = { merged: 0, failed: 0 };
+
+					// Sequential, not parallel: sp_execute_merge takes the
+					// plugin's merge lock, and processing in row order keeps
+					// success/failure attribution unambiguous.
+					var chain = Promise.resolve();
+					ready.forEach( function( r ) {
+						chain = chain.then( function() {
+							return self.executeGroup( r ).then( function( outcome ) {
+								if ( outcome.ok ) {
+									results.merged++;
+									// No sp-scroll-to-backup class yet: the merge
+									// itself succeeded, but the badge only becomes
+									// clickable once this exact refresh confirms
+									// the row it points at actually landed in the
+									// list — otherwise a click would silently find
+									// nothing.
+									self.setGroupResult( r.$tr, '<button type="button" class="sp-group-result sp-group-result-success" data-backup-id="' + self.escapeHtml( outcome.backupId ) + '">Merged &mdash; Backup #' + self.escapeHtml( outcome.backupId ) + '</button>' );
+									// Awaited, not fire-and-forget: overlapping
+									// unawaited refreshes could resolve out of
+									// order and leave a stale list clobbering a
+									// newer one — the badge above would then
+									// point at a backup missing from the list.
+									return self.refreshBackupSection().then( function( refreshed ) {
+										if ( refreshed ) {
+											r.$tr.find( '.sp-group-action .sp-group-result-success' ).addClass( 'sp-scroll-to-backup' );
+										} else {
+											self.showMessage( 'error', 'Backup #' + outcome.backupId + ' was created, but the Backups list could not be refreshed. Reload the page to find it.' );
+										}
+									} );
+								} else {
+									results.failed++;
+									self.setGroupResult( r.$tr, '<span class="sp-group-result sp-group-result-error">Failed: ' + self.escapeHtml( outcome.message ) + '</span>' );
+								}
+							} );
+						} );
+					} );
+
+					previewFailed.forEach( function( r ) {
+						self.setGroupResult( r.$tr, '<span class="sp-group-result sp-group-result-error">Failed: ' + self.escapeHtml( r.message ) + '</span>' );
+					} );
+
+					chain.then( function() {
+						self.setLoadingState( false );
+
+						var summary = results.merged + ' merged, ' + results.failed + ' failed';
+						if ( previewFailed.length ) {
+							summary += ', ' + previewFailed.length + ' could not be previewed';
+						}
+						if ( skipped ) {
+							summary += ', ' + skipped + ' skipped (fewer than 2 players ticked)';
+						}
+
+						self.showMessage( ( results.failed || previewFailed.length ) ? 'error' : 'success', summary + '.' );
+					} );
+				} );
+			} );
+		},
+
+		/**
+		 * Row-level entry point: run the pipeline for just the one group
+		 * containing the clicked button.
+		 *
+		 * @param {jQuery.Event} e Click event from a .sp-row-merge button.
+		 */
+		handleRowMerge: function( e ) {
+			e.preventDefault();
+			// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- 'tr' is a static string literal, not data-derived.
+			this.runMergeGroups( $( e.target ).closest( 'tr' ) );
+		},
+
+		/**
+		 * Batch entry point: run the pipeline for every group row on the
+		 * page (runMergeGroups() itself filters down to qualifying rows).
+		 *
+		 * @param {jQuery.Event} e Click event from a .sp-batch-merge button.
+		 */
+		handleBatchMerge: function( e ) {
+			e.preventDefault();
+			this.runMergeGroups( $( '.sp-duplicates-table tbody tr' ) );
+		},
+
+		/**
+		 * Keep both "Merge (x)" buttons' live count in sync with how many
+		 * player checkboxes are ticked across every group on the page.
+		 */
+		updateBatchMergeCount: function() {
+			var count = $( '.sp-dup-member:checked' ).length;
+			$( '.sp-batch-merge' ).text( 'Merge (' + count + ')' );
+		},
+
 		renderDuplicates: function( groups, scan ) {
 			var $content = $( '#duplicates-content' );
 			var header = '';
@@ -874,7 +1191,9 @@
 				return;
 			}
 
-			var html = header + '<table class="sp-duplicates-table">'
+			var batchButton = '<p class="sp-batch-actions"><button type="button" class="button button-primary sp-batch-merge">Merge (0)</button></p>';
+
+			var html = header + batchButton + '<table class="sp-duplicates-table">'
 				+ '<caption class="screen-reader-text">Possible duplicate player groups with certainty scores. Tick each player that belongs in the merge.</caption>'
 				+ '<thead><tr><th>Players</th><th style="text-align:center">Events</th><th style="text-align:center">Group certainty</th><th style="text-align:center">Action</th></tr></thead><tbody>';
 
@@ -921,7 +1240,7 @@
 					+ '<td style="text-align:center">' + this.escapeHtml( sorted.reduce( function( s, p ) { return s + p.events; }, 0 ) ) + '</td>'
 					+ '<td style="text-align:center"><span class="sp-certainty-badge ' + this.certaintyClass( g.certainty ) + '">'
 					+ this.escapeHtml( g.certainty ) + '% &mdash; ' + this.certaintyLabel( g.certainty ) + '</span></td>'
-					+ '<td style="text-align:center"><button type="button" class="button button-small sp-select-duplicates">Select ticked for Merge</button></td>'
+					+ '<td style="text-align:center"><span class="sp-group-action"><button type="button" class="button button-small sp-row-merge">Merge</button></span></td>'
 					+ '</tr>';
 			}
 
@@ -929,65 +1248,9 @@
 			if ( groups.length >= 50 ) {
 				html += '<p class="description" style="margin-top:8px;">Showing first 50 groups. Merge some duplicates and scan again to find more.</p>';
 			}
+			html += batchButton;
 			$content.html( html );
-		},
-
-		handleSelectDuplicates: function( e ) {
-			e.preventDefault();
-
-			// Stage only the members the operator ticked, never the whole group.
-			var players = [];
-			$( e.target ).closest( 'tr' ).find( '.sp-dup-member:checked' ).each( function() {
-				try {
-					players.push( JSON.parse( $( this ).attr( 'data-player' ) ) );
-				} catch ( err ) {
-					// Malformed row data; skip this member.
-				}
-			} );
-
-			if ( players.length < 2 ) {
-				this.showMessage( 'error', spMergeAjax.strings.selectMembers );
-				return;
-			}
-
-			// Rows render in events-descending order, so the first ticked member
-			// is the one with the most history: the best survivor.
-			var primary = players[0];
-			var duplicates = players.slice( 1 );
-
-			var buildLabel = function( p ) {
-				var parts = [ p.name + ' #' + p.id ];
-				var meta = [];
-				if ( p.team ) { meta.push( p.team ); }
-				if ( p.position ) { meta.push( p.position ); }
-				if ( meta.length ) { parts.push( '(' + meta.join( ' · ' ) + ')' ); }
-				parts.push( '— ' + p.events + ' events' );
-				return parts.join( ' ' );
-			};
-
-			// Set the primary player. addOption() first: setSelected() only
-			// picks among options SlimSelect already knows about, and a group
-			// staged straight from the scan results was never searched for.
-			this.primarySelect.addOption( { value: String( primary.id ), text: buildLabel( primary ) } );
-			this.primarySelect.setSelected( String( primary.id ) );
-
-			// Set the duplicate players.
-			var duplicateValues = [];
-			for ( var i = 0; i < duplicates.length; i++ ) {
-				this.duplicatesSelect.addOption( { value: String( duplicates[i].id ), text: buildLabel( duplicates[i] ) } );
-				duplicateValues.push( String( duplicates[i].id ) );
-			}
-			this.duplicatesSelect.setSelected( duplicateValues );
-
-			this.showMessage(
-				'info',
-				'Staged ' + players.length + ' of this group: keeping ' + primary.name + ' #' + primary.id
-					+ ', merging ' + duplicates.length + ' record(s) into it. Preview before executing.'
-			);
-
-			$( 'html, body' ).animate( {
-				scrollTop: $( '#sp-merge-form' ).offset().top - 50
-			}, 500 );
+			this.updateBatchMergeCount();
 		},
 
 		initDraggableCards: function() {
@@ -1012,8 +1275,42 @@
 
 			// Set up drag events on card headers.
 			var dragSrc = null;
+
+			// A header-scoped mouseup only disarms a card if the release
+			// lands back on that same header. A press that starts on the
+			// header and is released anywhere else — the common case for an
+			// aborted or accidental drag — never reaches it, leaving the
+			// card permanently draggable and reintroducing the very
+			// text-selection-becomes-a-drag bug this handle exists to
+			// prevent. A document-level mouseup disarms every card
+			// regardless of where the release happens; a window blur covers
+			// the same gap when the press is interrupted by e.g. an
+			// alt-tab, which fires neither mouseup nor dragend at all.
+			function disarmAllCards() {
+				container.querySelectorAll( '.sp-merge-card[draggable="true"]' ).forEach( function( c ) {
+					c.setAttribute( 'draggable', 'false' );
+				} );
+			}
+			document.addEventListener( 'mouseup', disarmAllCards );
+			window.addEventListener( 'blur', disarmAllCards );
+
 			container.querySelectorAll( '.sp-merge-card' ).forEach( function( card ) {
-				card.setAttribute( 'draggable', 'true' );
+				var header = card.querySelector( '.sp-merge-card-header' );
+
+				// Draggable only while the mouse is down on the header —
+				// otherwise the whole card is a drag source, and clicking or
+				// selecting text anywhere inside it (a player name, a backup
+				// row) starts a drag instead.
+				card.setAttribute( 'draggable', 'false' );
+				if ( header ) {
+					header.addEventListener( 'mousedown', function( e ) {
+						// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- the selector is a static string literal, not data-derived.
+						if ( 0 !== e.button || $( e.target ).closest( 'button, a, input, select, textarea' ).length ) {
+							return;
+						}
+						card.setAttribute( 'draggable', 'true' );
+					} );
+				}
 
 				card.addEventListener( 'dragstart', function( e ) {
 					dragSrc = card;
@@ -1056,6 +1353,7 @@
 
 				card.addEventListener( 'dragend', function() {
 					card.classList.remove( 'sp-dragging' );
+					card.setAttribute( 'draggable', 'false' );
 					container.querySelectorAll( '.sp-drag-over' ).forEach( function( c ) {
 						c.classList.remove( 'sp-drag-over' );
 					} );

@@ -622,12 +622,13 @@ button[disabled][title]:hover::before {
     text-decoration: underline;
 }
 
-/* Draggable cards */
-.sp-merge-card[draggable="true"] .sp-merge-card-header {
+/* Draggable cards — the header is the only drag handle, so the grab
+   affordance lives there regardless of the card's current draggable state. */
+.sp-merge-card-header {
     cursor: grab;
 }
 
-.sp-merge-card[draggable="true"] .sp-merge-card-header:active {
+.sp-merge-card-header:active {
     cursor: grabbing;
 }
 
@@ -754,4 +755,53 @@ button[disabled][title]:hover::before {
 
 .sp-duplicate-group li input[type="checkbox"] {
     margin: 0 4px 0 0;
+}
+
+/* Batch merge (Possible Duplicates card) */
+.sp-batch-actions {
+    margin: 12px 0;
+}
+
+.sp-group-result {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    font-family: inherit;
+}
+
+.sp-group-result-success {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.sp-group-result-error {
+    background: #f8d7da;
+    color: #842029;
+}
+
+button.sp-scroll-to-backup {
+    cursor: pointer;
+}
+
+button.sp-scroll-to-backup:hover,
+button.sp-scroll-to-backup:focus-visible {
+    background: #a3cfbb;
+}
+
+/* Pulses the backup row a "Merged" badge scrolled to, so it's findable
+   among potentially many rows from the same batch. */
+.sp-backup-pulse {
+    animation: sp-backup-pulse 1.5s ease-out;
+}
+
+@keyframes sp-backup-pulse {
+    0% {
+        background-color: #fff3cd;
+    }
+    100% {
+        background-color: transparent;
+    }
 }
