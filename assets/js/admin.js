@@ -771,10 +771,13 @@
 		 * Refresh the Backups list. Returns a promise that never rejects
 		 * (same reasoning as previewGroup()/executeGroup()) so callers that
 		 * chain on it — runMergeGroups()'s sequential batch, in particular —
-		 * never abort their own chain over a failed refresh; the list just
-		 * stays stale until the next successful one.
+		 * never abort their own chain over a failed refresh; it resolves
+		 * with an explicit true/false instead, so a caller can tell whether
+		 * the list actually landed the row it's expecting.
 		 *
-		 * @return {Promise<void>}
+		 * @return {Promise<boolean>} Resolves true on a successful refresh,
+		 *                            false otherwise (network failure, or a
+		 *                            malformed/unsuccessful response).
 		 */
 		refreshBackupSection: function() {
 			var self = this;
@@ -796,10 +799,13 @@
 
 							self.checkForExistingBackup();
 							$( '#revert-merge' ).removeClass( 'sp-hidden' ).show().prop( 'disabled', false );
+							resolve( true );
+							return;
 						}
+						resolve( false );
 					} )
-					.always( function() {
-						resolve();
+					.fail( function() {
+						resolve( false );
 					} );
 			} );
 		},
@@ -1078,13 +1084,25 @@
 							return self.executeGroup( r ).then( function( outcome ) {
 								if ( outcome.ok ) {
 									results.merged++;
-									self.setGroupResult( r.$tr, '<button type="button" class="sp-group-result sp-group-result-success sp-scroll-to-backup" data-backup-id="' + self.escapeHtml( outcome.backupId ) + '">Merged &mdash; Backup #' + self.escapeHtml( outcome.backupId ) + '</button>' );
+									// No sp-scroll-to-backup class yet: the merge
+									// itself succeeded, but the badge only becomes
+									// clickable once this exact refresh confirms
+									// the row it points at actually landed in the
+									// list — otherwise a click would silently find
+									// nothing.
+									self.setGroupResult( r.$tr, '<button type="button" class="sp-group-result sp-group-result-success" data-backup-id="' + self.escapeHtml( outcome.backupId ) + '">Merged &mdash; Backup #' + self.escapeHtml( outcome.backupId ) + '</button>' );
 									// Awaited, not fire-and-forget: overlapping
 									// unawaited refreshes could resolve out of
 									// order and leave a stale list clobbering a
 									// newer one — the badge above would then
 									// point at a backup missing from the list.
-									return self.refreshBackupSection();
+									return self.refreshBackupSection().then( function( refreshed ) {
+										if ( refreshed ) {
+											r.$tr.find( '.sp-group-action .sp-group-result-success' ).addClass( 'sp-scroll-to-backup' );
+										} else {
+											self.showMessage( 'error', 'Backup #' + outcome.backupId + ' was created, but the Backups list could not be refreshed. Reload the page to find it.' );
+										}
+									} );
 								} else {
 									results.failed++;
 									self.setGroupResult( r.$tr, '<span class="sp-group-result sp-group-result-error">Failed: ' + self.escapeHtml( outcome.message ) + '</span>' );
