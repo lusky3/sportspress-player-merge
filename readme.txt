@@ -4,7 +4,7 @@ Tags: sportspress, players, merge, duplicate, sports
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 8.2
-Stable tag: 1.3.1
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -83,7 +83,7 @@ Yes. `wp sp-merge scan`, `preview`, `merge`, `revert`, `backups list`, `backups 
 
 == Changelog ==
 
-= Unreleased =
+= 1.4.0 =
 * New: a "Merge" button on each duplicate-scan group now merges that group immediately, and a "Merge (x)" button above and below the results table merges every group with at least two players ticked in one pass (x = how many players are currently ticked across every group; a group with fewer than two ticked is skipped). One confirmation lists everything that will happen before anything runs; each group gets its own result shown inline, and one group failing doesn't stop the rest.
 * Fix: dragging an admin card by anywhere in it used to make it impossible to select or copy text inside the card (a player name, a backup ID); dragging now only starts from the card's own header/title bar.
 * Change: the "Merged — Backup #<id>" badge shown after a merge is now clickable — it scrolls to and briefly highlights that exact backup in the Backups list below, useful for finding one specific result among several from the same batch.
