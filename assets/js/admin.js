@@ -767,27 +767,41 @@
 			$( '#delete-selected-backups' ).prop( 'disabled', $( '.backup-checkbox:checked' ).length === 0 );
 		},
 
+		/**
+		 * Refresh the Backups list. Returns a promise that never rejects
+		 * (same reasoning as previewGroup()/executeGroup()) so callers that
+		 * chain on it — runMergeGroups()'s sequential batch, in particular —
+		 * never abort their own chain over a failed refresh; the list just
+		 * stays stale until the next successful one.
+		 *
+		 * @return {Promise<void>}
+		 */
 		refreshBackupSection: function() {
 			var self = this;
 
-			$.post( spMergeAjax.ajaxUrl, {
-				action: 'sp_get_recent_backups',
-				nonce: spMergeAjax.nonce
-			} )
-				.done( function( response ) {
-					if ( response.success && response.data.html ) {
-						var $backupCard = $( '.sp-backup-section' );
+			return new Promise( function( resolve ) {
+				$.post( spMergeAjax.ajaxUrl, {
+					action: 'sp_get_recent_backups',
+					nonce: spMergeAjax.nonce
+				} )
+					.done( function( response ) {
+						if ( response.success && response.data.html ) {
+							var $backupCard = $( '.sp-backup-section' );
 
-						if ( $backupCard.length ) {
-							$backupCard.find( '.sp-merge-card-body' ).html( self.sanitizeHtml( response.data.html ) );
-						} else {
-							self.createBackupSection( response.data.html );
+							if ( $backupCard.length ) {
+								$backupCard.find( '.sp-merge-card-body' ).html( self.sanitizeHtml( response.data.html ) );
+							} else {
+								self.createBackupSection( response.data.html );
+							}
+
+							self.checkForExistingBackup();
+							$( '#revert-merge' ).removeClass( 'sp-hidden' ).show().prop( 'disabled', false );
 						}
-
-						self.checkForExistingBackup();
-						$( '#revert-merge' ).removeClass( 'sp-hidden' ).show().prop( 'disabled', false );
-					}
-				} );
+					} )
+					.always( function() {
+						resolve();
+					} );
+			} );
 		},
 
 		createBackupSection: function( backupHtml ) {
@@ -944,6 +958,7 @@
 		 *                           for any interpolated text before calling this).
 		 */
 		setGroupResult: function( $tr, badgeHtml ) {
+			// nosemgrep: javascript.jquery.security.audit.prohibit-jquery-html.prohibit-jquery-html -- every caller builds badgeHtml with escapeHtml() around each interpolated value (see the two call sites in runMergeGroups()); the rule can't see that, only that .html() was called.
 			$tr.find( '.sp-group-action' ).html( badgeHtml );
 			$tr.find( '.sp-dup-member' ).prop( 'checked', false ).prop( 'disabled', true );
 			this.updateBatchMergeCount();
@@ -957,12 +972,17 @@
 		 * @param {jQuery.Event} e Click event from a .sp-scroll-to-backup badge.
 		 */
 		handleScrollToBackup: function( e ) {
+			// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- $() wraps e.currentTarget, an element reference, not a selector string built from data.
 			var backupId = $( e.currentTarget ).data( 'backup-id' );
 
 			// The delete button is present for every backup regardless of
 			// status, unlike revert (active/pending only) — the more
-			// reliable anchor back to that backup's row.
-			var $row = $( '.sp-delete-backup[data-backup-id="' + backupId + '"]' ).closest( '.sp-backup-item' );
+			// reliable anchor back to that backup's row. escapeSelector()
+			// neutralizes any CSS-selector metacharacter in the id before
+			// it's concatenated into the selector string, even though the
+			// id is always a server-generated value (never user-typed).
+			// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- $.escapeSelector() neutralizes CSS-selector metacharacters before concatenation; the rule flags the shape, not whether it's actually escaped.
+			var $row = $( '.sp-delete-backup[data-backup-id="' + $.escapeSelector( backupId ) + '"]' ).closest( '.sp-backup-item' );
 
 			if ( ! $row.length ) {
 				return;
@@ -1059,7 +1079,12 @@
 								if ( outcome.ok ) {
 									results.merged++;
 									self.setGroupResult( r.$tr, '<button type="button" class="sp-group-result sp-group-result-success sp-scroll-to-backup" data-backup-id="' + self.escapeHtml( outcome.backupId ) + '">Merged &mdash; Backup #' + self.escapeHtml( outcome.backupId ) + '</button>' );
-									self.refreshBackupSection();
+									// Awaited, not fire-and-forget: overlapping
+									// unawaited refreshes could resolve out of
+									// order and leave a stale list clobbering a
+									// newer one — the badge above would then
+									// point at a backup missing from the list.
+									return self.refreshBackupSection();
 								} else {
 									results.failed++;
 									self.setGroupResult( r.$tr, '<span class="sp-group-result sp-group-result-error">Failed: ' + self.escapeHtml( outcome.message ) + '</span>' );
@@ -1097,6 +1122,7 @@
 		 */
 		handleRowMerge: function( e ) {
 			e.preventDefault();
+			// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- 'tr' is a static string literal, not data-derived.
 			this.runMergeGroups( $( e.target ).closest( 'tr' ) );
 		},
 
@@ -1231,6 +1257,25 @@
 
 			// Set up drag events on card headers.
 			var dragSrc = null;
+
+			// A header-scoped mouseup only disarms a card if the release
+			// lands back on that same header. A press that starts on the
+			// header and is released anywhere else — the common case for an
+			// aborted or accidental drag — never reaches it, leaving the
+			// card permanently draggable and reintroducing the very
+			// text-selection-becomes-a-drag bug this handle exists to
+			// prevent. A document-level mouseup disarms every card
+			// regardless of where the release happens; a window blur covers
+			// the same gap when the press is interrupted by e.g. an
+			// alt-tab, which fires neither mouseup nor dragend at all.
+			function disarmAllCards() {
+				container.querySelectorAll( '.sp-merge-card[draggable="true"]' ).forEach( function( c ) {
+					c.setAttribute( 'draggable', 'false' );
+				} );
+			}
+			document.addEventListener( 'mouseup', disarmAllCards );
+			window.addEventListener( 'blur', disarmAllCards );
+
 			container.querySelectorAll( '.sp-merge-card' ).forEach( function( card ) {
 				var header = card.querySelector( '.sp-merge-card-header' );
 
@@ -1241,13 +1286,11 @@
 				card.setAttribute( 'draggable', 'false' );
 				if ( header ) {
 					header.addEventListener( 'mousedown', function( e ) {
+						// nosemgrep: javascript.jquery.security.audit.jquery-insecure-selector.jquery-insecure-selector -- the selector is a static string literal, not data-derived.
 						if ( 0 !== e.button || $( e.target ).closest( 'button, a, input, select, textarea' ).length ) {
 							return;
 						}
 						card.setAttribute( 'draggable', 'true' );
-					} );
-					header.addEventListener( 'mouseup', function() {
-						card.setAttribute( 'draggable', 'false' );
 					} );
 				}
 
