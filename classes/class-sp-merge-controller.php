@@ -31,11 +31,19 @@ class SP_Merge_Controller {
 	private SP_Merge_Ajax $ajax;
 
 	/**
+	 * Merge history meta box instance.
+	 *
+	 * @var SP_Merge_History_Metabox
+	 */
+	private SP_Merge_History_Metabox $history_metabox;
+
+	/**
 	 * Constructor — initializes components and hooks.
 	 */
 	public function __construct() {
-		$this->admin = new SP_Merge_Admin();
-		$this->ajax  = new SP_Merge_Ajax();
+		$this->admin           = new SP_Merge_Admin();
+		$this->ajax            = new SP_Merge_Ajax();
+		$this->history_metabox = new SP_Merge_History_Metabox();
 
 		$this->init_hooks();
 	}
@@ -46,6 +54,7 @@ class SP_Merge_Controller {
 	private function init_hooks(): void {
 		add_action( 'admin_menu', array( $this->admin, 'add_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this->admin, 'enqueue_scripts' ) );
+		add_action( 'add_meta_boxes', array( $this->history_metabox, 'register_meta_box' ), 10, 2 );
 
 		// AJAX handlers — authenticated only.
 		add_action( 'wp_ajax_sp_preview_merge', array( $this->ajax, 'preview_merge' ) );

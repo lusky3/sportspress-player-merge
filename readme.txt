@@ -83,6 +83,9 @@ Yes. `wp sp-merge scan`, `preview`, `merge`, `revert`, `backups list`, `backups 
 
 == Changelog ==
 
+= Unreleased =
+* New: a merged-away player's old permalink now redirects to the survivor instead of 404ing, and the survivor's edit screen gains a read-only "Merge History" panel listing every duplicate it has absorbed. Applies to merges performed from here forward.
+
 = 1.4.0 =
 * New: a "Merge" button on each duplicate-scan group now merges that group immediately, and a "Merge (x)" button above and below the results table merges every group with at least two players ticked in one pass (x = how many players are currently ticked across every group; a group with fewer than two ticked is skipped). One confirmation lists everything that will happen before anything runs; each group gets its own result shown inline, and one group failing doesn't stop the rest.
 * Fix: dragging an admin card by anywhere in it used to make it impossible to select or copy text inside the card (a player name, a backup ID); dragging now only starts from the card's own header/title bar.

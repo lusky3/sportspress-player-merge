@@ -45,9 +45,15 @@ class SP_Merge_Backup {
 	 *
 	 * These are WordPress-internal bookkeeping rows that describe the current
 	 * state of the site rather than the player, and removing them would break
-	 * editor locks and post-merge permalink redirects. Everything else the
-	 * backup captured — including `_thumbnail_id` and third-party keys such as
-	 * `spt_email` — is restored verbatim.
+	 * editor locks and post-merge permalink redirects. `_sp_merge_history` is
+	 * this plugin's own bookkeeping for the same reason: a primary can carry
+	 * one row per duplicate it has absorbed across several merges, and
+	 * reverting one of them must not wipe the others' audit trail — a blanket
+	 * restore-time delete here would do exactly that, since
+	 * cleanup_merge_history() removes only the reverted merge's own rows
+	 * elsewhere in execute_revert(), before this method ever runs. Everything
+	 * else the backup captured — including `_thumbnail_id` and third-party
+	 * keys such as `spt_email` — is restored verbatim.
 	 *
 	 * @var string[]
 	 */
@@ -59,6 +65,7 @@ class SP_Merge_Backup {
 		'_wp_desired_post_slug',
 		'_wp_trash_meta_status',
 		'_wp_trash_meta_time',
+		'_sp_merge_history',
 	);
 
 	/**
@@ -1328,6 +1335,12 @@ class SP_Merge_Backup {
 			if ( isset( $duplicate_backup['post_data'] ) ) {
 				$this->recreate_player( (int) $duplicate_id, $duplicate_backup );
 				$recreated_ids[] = (int) $duplicate_id;
+
+				$this->cleanup_merge_history(
+					$primary_id,
+					(int) $duplicate_id,
+					(string) ( $duplicate_backup['post_data']['post_name'] ?? '' )
+				);
 			}
 		}
 
@@ -1341,6 +1354,35 @@ class SP_Merge_Backup {
 			delete_transient( 'sp_player_data_' . $pid );
 			if ( function_exists( 'sp_delete_player_data' ) ) {
 				sp_delete_player_data( $pid );
+			}
+		}
+	}
+
+	/**
+	 * Remove the redirect and audit-trail rows SP_Merge_Processor::record_merge_history()
+	 * wrote onto the primary, now that the duplicate it describes has been recreated.
+	 *
+	 * Matches by value rather than blindly clearing the meta key, since a primary that
+	 * has absorbed more than one duplicate — across separate merges, or one batch —
+	 * carries one `_sp_merge_history` row per duplicate and must keep the others intact
+	 * when only one of those merges is reverted. `_wp_old_slug` is matched directly on
+	 * the duplicate's original slug; `_sp_merge_history` entries are fetched first and
+	 * matched by `duplicate_id`, since the row also carries a merge timestamp and backup
+	 * ID this method has no independent copy of to reconstruct.
+	 *
+	 * @param int    $primary_id     Player ID that absorbed the duplicate.
+	 * @param int    $duplicate_id   Player ID just recreated.
+	 * @param string $original_slug  The duplicate's slug before it was merged away.
+	 */
+	private function cleanup_merge_history( int $primary_id, int $duplicate_id, string $original_slug ): void {
+		if ( '' !== $original_slug ) {
+			delete_post_meta( $primary_id, '_wp_old_slug', $original_slug );
+		}
+
+		$entries = get_post_meta( $primary_id, '_sp_merge_history', false );
+		foreach ( $entries as $entry ) {
+			if ( is_array( $entry ) && isset( $entry['duplicate_id'] ) && $duplicate_id === (int) $entry['duplicate_id'] ) {
+				delete_post_meta( $primary_id, '_sp_merge_history', $entry );
 			}
 		}
 	}

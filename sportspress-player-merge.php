@@ -140,6 +140,7 @@ class SportsPress_Player_Merge_Init {
 			'class-sp-merge-processor.php',
 			'class-sp-merge-backup.php',
 			'class-sp-merge-preview.php',
+			'class-sp-merge-history-metabox.php',
 		);
 
 		/*

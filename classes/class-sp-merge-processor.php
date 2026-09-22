@@ -193,6 +193,7 @@ class SP_Merge_Processor {
 				if ( ! $post ) {
 					continue;
 				}
+				$this->record_merge_history( $primary_id, $post, (string) $backup_id );
 				$deleted = wp_delete_post( $duplicate_id, true );
 				if ( ! $deleted ) {
 					throw new Exception(
@@ -283,6 +284,76 @@ class SP_Merge_Processor {
 			);
 		} finally {
 			$this->release_lock();
+		}
+	}
+
+	/**
+	 * Leave a trail on the primary before a duplicate is deleted out from under it.
+	 *
+	 * `_wp_old_slug` reuses WordPress core's own `wp_old_slug_redirect()` (hooked on
+	 * `template_redirect`): a bookmarked or search-indexed link to the duplicate's old
+	 * permalink 301s to the survivor instead of 404ing, with no custom redirect code
+	 * needed here. `add_post_meta()` (not `update_post_meta()`) is deliberate for both
+	 * keys — a primary that absorbs several duplicates, in one batch or over time,
+	 * accumulates one row per duplicate rather than the later one clobbering the
+	 * earlier. `_sp_merge_history` is this plugin's own audit trail, rendered on the
+	 * primary's edit screen by SP_Merge_History_Metabox since the backups list is the
+	 * only other record of a merge and ages out after 30 days.
+	 *
+	 * SP_Merge_Backup::execute_revert() removes both rows again if this merge is
+	 * later undone — this method's writes and that cleanup are two ends of the same
+	 * fact and must be kept in sync.
+	 *
+	 * A failure here (add_post_meta() returns false) is logged, not thrown: a merge
+	 * that otherwise fully succeeded shouldn't be rolled back over a cosmetic history
+	 * row.
+	 *
+	 * @param int    $primary_id Player ID being kept.
+	 * @param object $duplicate  The player post (WP_Post) about to be deleted.
+	 * @param string $backup_id  Backup ID this merge was recorded under.
+	 */
+	private function record_merge_history( int $primary_id, object $duplicate, string $backup_id ): void {
+		$slug  = (string) ( $duplicate->post_name ?? '' );
+		$title = (string) ( $duplicate->post_title ?? '' );
+
+		if ( '' !== $slug && ! add_post_meta( $primary_id, '_wp_old_slug', $slug ) ) {
+			$this->log_merge_history_failure( $primary_id, $duplicate->ID, '_wp_old_slug' );
+		}
+
+		$recorded = add_post_meta(
+			$primary_id,
+			'_sp_merge_history',
+			array(
+				'duplicate_id' => $duplicate->ID,
+				'title'        => $title,
+				'slug'         => $slug,
+				'merged_at'    => current_time( 'mysql' ),
+				'backup_id'    => $backup_id,
+			)
+		);
+
+		if ( ! $recorded ) {
+			$this->log_merge_history_failure( $primary_id, $duplicate->ID, '_sp_merge_history' );
+		}
+	}
+
+	/**
+	 * Log a non-fatal failure to write a merge-history meta row.
+	 *
+	 * @param int    $primary_id   Player ID being kept.
+	 * @param int    $duplicate_id Player ID being deleted.
+	 * @param string $meta_key     The meta key that failed to write.
+	 */
+	private function log_merge_history_failure( int $primary_id, int $duplicate_id, string $meta_key ): void {
+		if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+			error_log( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				sprintf(
+					'SP Merge: failed to write %s on primary %d while deleting duplicate %d.',
+					$meta_key,
+					$primary_id,
+					$duplicate_id
+				)
+			);
 		}
 	}
 
