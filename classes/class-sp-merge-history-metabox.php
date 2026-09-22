@@ -63,7 +63,15 @@ class SP_Merge_History_Metabox {
 			return;
 		}
 
-		usort( $entries, array( $this, 'compare_by_merged_at_desc' ) );
+		usort(
+			$entries,
+			function ( $a, $b ) {
+				// A plain method call, not an array-callable: PHPMD's static
+				// analysis doesn't follow `array( $this, 'method' )` and would
+				// otherwise flag compare_by_merged_at_desc() as unused.
+				return $this->compare_by_merged_at_desc( $a, $b );
+			}
+		);
 
 		echo '<ul class="sp-merge-history-list">';
 		foreach ( $entries as $entry ) {
