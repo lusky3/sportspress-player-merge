@@ -3,5 +3,13 @@
 # code. Codacy's file-type detection was misreading it as PHP and flagging its
 # raw line count as excessive "complexity" — a false positive on a file that
 # is never hand-written or hand-edited.
+#
+# tests/ is a standalone hand-mocked test harness, not shipped code — the same
+# rationale .github/workflows/lint.yml already uses to exclude it from the
+# copy-paste-detection gate. Its mock functions deliberately mirror real
+# WordPress function signatures exactly (e.g. `esc_html__( $text, $domain )`),
+# so PHPMD rules like UnusedFormalParameter and Superglobals fire on every one
+# of them — not a real defect, just the cost of a drop-in-compatible mock.
 exclude_paths:
   - "composer.lock"
+  - "tests/**"

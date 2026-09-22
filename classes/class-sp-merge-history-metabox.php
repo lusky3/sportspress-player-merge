@@ -63,42 +63,55 @@ class SP_Merge_History_Metabox {
 			return;
 		}
 
-		usort(
-			$entries,
-			static function ( $a, $b ) {
-				$a_time = is_array( $a ) ? (string) ( $a['merged_at'] ?? '' ) : '';
-				$b_time = is_array( $b ) ? (string) ( $b['merged_at'] ?? '' ) : '';
-				return strcmp( $b_time, $a_time );
-			}
-		);
+		usort( $entries, array( $this, 'compare_by_merged_at_desc' ) );
 
 		echo '<ul class="sp-merge-history-list">';
 		foreach ( $entries as $entry ) {
-			if ( ! is_array( $entry ) ) {
-				continue;
+			if ( is_array( $entry ) ) {
+				$this->render_entry( $entry );
 			}
-
-			$title        = (string) ( $entry['title'] ?? '' );
-			$duplicate_id = (int) ( $entry['duplicate_id'] ?? 0 );
-			$merged_at    = (string) ( $entry['merged_at'] ?? '' );
-
-			$when = $merged_at
-				? mysql2date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $merged_at )
-				: __( 'unknown time', 'sportspress-player-merge' );
-
-			printf(
-				'<li>%1$s <span class="description">(#%2$d)</span><br><span class="description">%3$s</span></li>',
-				esc_html( $title ),
-				$duplicate_id,
-				esc_html(
-					sprintf(
-						/* translators: %s: date and time the merge happened */
-						__( 'Merged %s', 'sportspress-player-merge' ),
-						$when
-					)
-				)
-			);
 		}
 		echo '</ul>';
+	}
+
+	/**
+	 * usort() comparator: newest merged_at first.
+	 *
+	 * @param mixed $a One `_sp_merge_history` entry.
+	 * @param mixed $b Another `_sp_merge_history` entry.
+	 * @return int
+	 */
+	private function compare_by_merged_at_desc( $a, $b ): int {
+		$a_time = is_array( $a ) ? (string) ( $a['merged_at'] ?? '' ) : '';
+		$b_time = is_array( $b ) ? (string) ( $b['merged_at'] ?? '' ) : '';
+		return strcmp( $b_time, $a_time );
+	}
+
+	/**
+	 * Render one `<li>` for a single history entry.
+	 *
+	 * @param array $entry One `_sp_merge_history` entry.
+	 */
+	private function render_entry( array $entry ): void {
+		$title        = (string) ( $entry['title'] ?? '' );
+		$duplicate_id = (int) ( $entry['duplicate_id'] ?? 0 );
+		$merged_at    = (string) ( $entry['merged_at'] ?? '' );
+
+		$when = $merged_at
+			? mysql2date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $merged_at )
+			: __( 'unknown time', 'sportspress-player-merge' );
+
+		printf(
+			'<li>%1$s <span class="description">(#%2$d)</span><br><span class="description">%3$s</span></li>',
+			esc_html( $title ),
+			$duplicate_id,
+			esc_html(
+				sprintf(
+					/* translators: %s: date and time the merge happened */
+					__( 'Merged %s', 'sportspress-player-merge' ),
+					$when
+				)
+			)
+		);
 	}
 }
