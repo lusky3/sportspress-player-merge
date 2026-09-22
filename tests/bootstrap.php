@@ -221,7 +221,28 @@ function update_post_meta( $post_id, $key, $value ) {
 
 function delete_post_meta( $post_id, $key, $value = '' ) {
 	$post_id = (int) $post_id;
-	unset( $GLOBALS['spm_meta'][ $post_id ][ $key ] );
+
+	// Mirrors delete_metadata(): an empty $value wipes every row for the key; a
+	// real value scopes the delete to rows matching it, same as production, so a
+	// test can prove a value-matched delete leaves sibling rows under the same
+	// key untouched. This harness stores raw unslashed values (not serialized
+	// strings), so the comparison mirrors add_post_meta()'s own storage shape.
+	if ( '' === $value || null === $value ) {
+		unset( $GLOBALS['spm_meta'][ $post_id ][ $key ] );
+		return true;
+	}
+
+	if ( isset( $GLOBALS['spm_meta'][ $post_id ][ $key ] ) ) {
+		$target                                    = wp_unslash( $value );
+		$GLOBALS['spm_meta'][ $post_id ][ $key ] = array_values(
+			array_filter(
+				$GLOBALS['spm_meta'][ $post_id ][ $key ],
+				static function ( $stored ) use ( $target ) {
+					return $stored !== $target;
+				}
+			)
+		);
+	}
 
 	return true;
 }
@@ -258,6 +279,10 @@ function set_post_thumbnail( $post_id, $thumbnail_id ) {
 	$GLOBALS['spm_meta'][ (int) $post_id ]['_thumbnail_id'] = array( $thumbnail_id );
 
 	return true;
+}
+
+function current_time( $type ) {
+	return gmdate( 'Y-m-d H:i:s' );
 }
 
 function get_object_taxonomies( $object_type ) {

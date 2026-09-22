@@ -265,11 +265,21 @@ function update_post_meta( $post_id, $key, $value ) {
 	return sp_test_add_meta( (int) $post_id, (string) $key, wp_unslash( $value ) );
 }
 
-function delete_post_meta( $post_id, $key ) {
+function delete_post_meta( $post_id, $key, $value = '' ) {
+	// Mirrors delete_metadata(): an empty $value wipes every row for the key; a
+	// real value scopes the delete to rows matching it, same as production, so a
+	// test can prove a value-matched delete leaves sibling rows under the same
+	// key untouched.
+	$target = ( '' === $value || null === $value ) ? null : (string) maybe_serialize( wp_unslash( $value ) );
+
 	foreach ( $GLOBALS['sp_meta_rows'] as $meta_id => $row ) {
-		if ( (int) $row['post_id'] === (int) $post_id && $row['meta_key'] === $key ) {
-			unset( $GLOBALS['sp_meta_rows'][ $meta_id ] );
+		if ( (int) $row['post_id'] !== (int) $post_id || $row['meta_key'] !== $key ) {
+			continue;
 		}
+		if ( null !== $target && $row['meta_value'] !== $target ) {
+			continue;
+		}
+		unset( $GLOBALS['sp_meta_rows'][ $meta_id ] );
 	}
 	return true;
 }

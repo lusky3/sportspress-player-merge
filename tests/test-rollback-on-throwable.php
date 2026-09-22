@@ -50,11 +50,15 @@ function spm_seed_merge_fixture(): void {
 		'ID'          => 100,
 		'post_type'   => 'sp_player',
 		'post_status' => 'publish',
+		'post_name'   => 'primary-player',
+		'post_title'  => 'Primary Player',
 	);
 	$GLOBALS['spm_posts'][200] = (object) array(
 		'ID'          => 200,
 		'post_type'   => 'sp_player',
 		'post_status' => 'publish',
+		'post_name'   => 'duplicate-player',
+		'post_title'  => 'Duplicate Player',
 	);
 
 	// get_col() order: events for the duplicate, sp_lists, then events for the
