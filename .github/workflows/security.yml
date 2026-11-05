@@ -49,7 +49,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: snyk/actions/php@12140f4059e244892ae643824a95459a102120dd # master as of 2026-08
+      - uses: snyk/actions/php@11b673cfb4b0dc0d860a1323caa199d54950dcce # master as of 2026-08
         with:
           command: code test
           args: --severity-threshold=high
